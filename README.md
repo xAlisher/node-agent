@@ -7,7 +7,7 @@
 
 Clone it onto a Linux box, tell your agent (Claude Code or similar) to read **[AGENT.md](AGENT.md)**, and it
 will assess what's already there, ask you the few things it can't detect, and bring the box to a **green
-Logos node (v0.2.1) + a live dashboard** — picking up from wherever the box already is, without redoing done
+Logos node (v0.2.3) + a live dashboard** — picking up from wherever the box already is, without redoing done
 work or breaking a healthy node.
 
 Built for the Logos EcoDev node-operator workshops; reusable by anyone.
