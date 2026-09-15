@@ -1,11 +1,11 @@
-# Logos node 0.2.1 — agent setup runbook
+# Logos node 0.2.4 — agent setup runbook
 
 Bring a **clean Ubuntu 24.04 box (tailscale-ssh already up)** to a **green Logos blockchain node
 + dashboard**, the way the upstream docs prescribe, in one prompt. Built for the 2026-08-13 demo;
 reusable by anyone's agent.
 
 > **Skip** (assumed done): Ubuntu install, SSH/Tailscale, Claude Code login.
-> **Target:** node = `blockchain_module` **0.2.1** via `logoscore`/`lgpd`/`lgpm` (core tools `0.2.0`).
+> **Target:** node = `blockchain_module` **0.2.4** via `logoscore`/`lgpd`/`lgpm` (core tools `0.2.0`).
 > **Green** = `n_peers > 0` AND `height` climbing → eventually `state: Online`. Judge by **height**, never the UI.
 
 ## Prerequisites & dependencies
@@ -143,7 +143,7 @@ for the demo, show *funded + Online + height tracking tip*).
 - [ ] *(optional, to survive a power outage)* BIOS **"Restore on AC Power Loss" → Power On**
 
 **Node (sudo-free)**
-- [ ] `blockchain_module 0.2.1` installed; `user_config.yaml` generated with the **current** bootstrap peers
+- [ ] `blockchain_module 0.2.4` installed; `user_config.yaml` generated with the **current** bootstrap peers
       (refreshed from the target release's notes) + a diverse peer added
 - [ ] `scripts/healthcheck.sh` → **GREEN** — `n_peers > 0`, `height` climbing, `state: Online`
 - [ ] Node **survives SSH logout** (detached `logoscore` daemon + dashboard in tmux `dashboard`)

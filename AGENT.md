@@ -61,7 +61,7 @@ you're about to do, how long it takes, and where you'll need them.** Then ask pe
 
 > Here's what I found: your box is ready (Ubuntu, Tailscale, deps all good) and there's **no node yet**.
 > So my plan is:
-> 1. Install the Logos node tools + the pinned `blockchain_module` package (currently 0.2.3) *(~2 min)*
+> 1. Install the Logos node tools + the pinned `blockchain_module` package (currently 0.2.4) *(~2 min)*
 > 2. Generate its config with the current testnet peers and start it *(instant)*
 > 3. Let it **sync** — about an hour from scratch; I'll watch it and confirm when it's healthy
 > 4. Bring up a little **dashboard** you can open from your phone
@@ -96,7 +96,7 @@ the assess output). Example:
 
 > ✅ **Your Logos node is up and running.**
 >
-> **What I did:** installed the node tools + `blockchain_module` (0.2.3, per node.env), generated its config with the current
+> **What I did:** installed the node tools + `blockchain_module` (0.2.4, per node.env), generated its config with the current
 > testnet peers, started it syncing, and brought up a dashboard.
 >
 > **Node status:** `Bootstrapping`, height 12,180 and climbing, **48 peers** — GREEN. It'll reach `Online`
