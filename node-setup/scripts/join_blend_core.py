@@ -97,11 +97,23 @@ def http_post(url: str, payload, timeout: float = 25.0):
         return e.code, e.read().decode("utf-8", "replace")
 
 def node_up(node_api: str) -> bool:
+    # Probe /cryptarchia/info, not /blend/info: the blend endpoints are not served until the node is
+    # Online (during bootstrap /blend/info refuses the connection), but /cryptarchia/info is up as soon
+    # as the API is, so this correctly reports a live-but-still-syncing node as up.
     try:
-        http_get(f"{node_api}/blend/info", timeout=3)
+        http_get(f"{node_api}/cryptarchia/info", timeout=3)
         return True
     except (urllib.error.URLError, OSError):
         return False
+
+def node_online(node_api: str) -> bool:
+    """True only once the node reports state Online (Blend needs an Online node)."""
+    try:
+        _, data = http_get_json(f"{node_api}/cryptarchia/info", timeout=4)
+    except (urllib.error.URLError, OSError):
+        return False
+    ci = (data or {}).get("cryptarchia_info") or (data or {})
+    return str(ci.get("state", "")).lower() == "online"
 
 # ── config parsing (a tiny, targeted YAML read — no pip) ────────────────────────────────────
 def read_config_text(config_path: Path) -> str:
@@ -278,6 +290,13 @@ def cmd_status(args) -> int:
     port = blend_port(cfg_text)
     info(f"SDP funding key: {sdp_pk[:12]}…{sdp_pk[-6:]}  ·  blend port: {port}")
 
+    if not node_online(args.node_api):
+        warn("node is still bootstrapping (not Online yet) — the Blend API isn't served until the node "
+             "is Online, so there's nothing to declare/read yet. Re-run once it reaches Online.")
+        emit_result(args.json, {"ok": True, "online": False, "blend_ready": False,
+                                "blend_port": port, "declared": False})
+        return 0
+
     notes = our_note_ids(args.node_api, sdp_pk)
     info(f"SDP key funded: {'yes' if notes else 'no'} ({len(notes)} note(s))")
 
@@ -317,7 +336,10 @@ def cmd_join(args) -> int:
     step("Preflight: node + config")
     if not node_up(args.node_api):
         raise fail("E_NODE_UNREACHABLE", f"node API not reachable at {args.node_api} — start the node first")
-    ok(f"node reachable at {args.node_api}")
+    if not node_online(args.node_api):
+        raise fail("E_NOT_ONLINE", "node is still bootstrapping — Blend needs an Online node. "
+                                   "Wait until it reaches Online (watch healthcheck.sh), then join.")
+    ok(f"node reachable and Online at {args.node_api}")
     cfg_path = Path(args.config)
     cfg_text = read_config_text(cfg_path)
     sdp_pk = sdp_funding_pk(cfg_text)
