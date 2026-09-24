@@ -156,6 +156,38 @@
       color: var(--bad);
     }
 
+    .btn {
+      appearance: none;
+      cursor: pointer;
+      font: inherit;
+      font-weight: 600;
+      color: #041007;
+      background: var(--good);
+      border: 1px solid var(--good);
+      border-radius: 6px;
+      padding: 9px 16px;
+      transition: opacity 0.15s ease;
+    }
+    .btn:hover { opacity: 0.88; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn.secondary {
+      color: var(--muted);
+      background: transparent;
+      border-color: var(--border);
+    }
+    .btn-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 8px; }
+    .badge {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 3px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+    }
+    .badge.good { color: var(--good); border-color: var(--good); }
+    .badge.warn { color: var(--warn); border-color: var(--warn); }
+    .badge.off  { color: var(--muted); }
+
     .proposal-table-wrap {
       overflow-x: auto;
       border: 1px solid var(--border);
@@ -261,6 +293,47 @@
     </div>
 
     <div class="panel">
+      <h2>Blend Core <span id="blendBadge" class="badge off">…</span></h2>
+      <div class="meta" id="blendMeta">Reading Blend provider state…</div>
+      <div class="panel-grid">
+        <div class="card">
+          <div class="label">Status</div>
+          <div id="blendState" class="value">-</div>
+        </div>
+        <div class="card">
+          <div class="label">In-Core Peers</div>
+          <div id="blendPeers" class="value">-</div>
+        </div>
+        <div class="card">
+          <div class="label">Nonce (earning)</div>
+          <div id="blendNonce" class="value">-</div>
+        </div>
+        <div class="card">
+          <div class="label">Active Epoch</div>
+          <div id="blendActive" class="value">-</div>
+        </div>
+      </div>
+      <div class="row" style="margin-bottom: 6px;">
+        <div><strong>Locator:</strong> <code id="blendLocator">-</code></div>
+      </div>
+      <div class="row">
+        <div><strong>Declaration:</strong> <code id="blendDecl">-</code></div>
+      </div>
+      <div class="btn-row" id="blendActions" style="display:none;">
+        <button id="blendJoinBtn" class="btn">Join Blend Core</button>
+        <button id="blendWithdrawBtn" class="btn secondary">Withdraw</button>
+        <span id="blendActionMsg" class="meta" style="margin:0;"></span>
+      </div>
+      <div class="meta" id="blendActionsHint" style="display:none; margin-top:8px;">
+        On-chain join/withdraw buttons are disabled. They lock stake, pay a fee and publish your public IP,
+        so enable them deliberately: <code>BLEND_ACTIONS=1</code> when starting the dashboard, or run
+        <code>node-setup/scripts/join_blend_core.py join</code> on the box.
+      </div>
+      <pre id="blendOutput" style="display:none; margin-top:12px;"></pre>
+      <div id="blendError" class="error" style="margin-top: 12px;"></div>
+    </div>
+
+    <div class="panel">
       <h2>Block Proposals</h2>
       <div class="meta" id="proposalMeta">Loading proposal activity…</div>
       <div class="panel-grid">
@@ -336,6 +409,21 @@
       logMeta: document.getElementById("logMeta"),
       logs: document.getElementById("logs"),
       subtitle: document.getElementById("subtitle"),
+      blendBadge: document.getElementById("blendBadge"),
+      blendMeta: document.getElementById("blendMeta"),
+      blendState: document.getElementById("blendState"),
+      blendPeers: document.getElementById("blendPeers"),
+      blendNonce: document.getElementById("blendNonce"),
+      blendActive: document.getElementById("blendActive"),
+      blendLocator: document.getElementById("blendLocator"),
+      blendDecl: document.getElementById("blendDecl"),
+      blendActions: document.getElementById("blendActions"),
+      blendActionsHint: document.getElementById("blendActionsHint"),
+      blendJoinBtn: document.getElementById("blendJoinBtn"),
+      blendWithdrawBtn: document.getElementById("blendWithdrawBtn"),
+      blendActionMsg: document.getElementById("blendActionMsg"),
+      blendOutput: document.getElementById("blendOutput"),
+      blendError: document.getElementById("blendError"),
     };
 
     const PANEL_REFRESH_MS = 5000;
@@ -348,6 +436,85 @@
       if (lower === "online") els.mode.classList.add("status-online");
       else if (lower === "bootstrapping") els.mode.classList.add("status-bootstrapping");
       else els.mode.classList.add("status-offline");
+    }
+
+    function renderBlend(b) {
+      els.blendError.textContent = "";
+      if (!b || b.supported === false) {
+        els.blendBadge.className = "badge off";
+        els.blendBadge.textContent = "n/a";
+        els.blendMeta.textContent = (b && b.error) ? b.error : "Blend status unavailable.";
+        els.blendActions.style.display = "none";
+        return;
+      }
+      const declared = !!b.declared;
+      const earning = !!b.earning;
+      els.blendBadge.className = "badge " + (earning ? "good" : declared ? "warn" : "off");
+      els.blendBadge.textContent = earning ? "Earning" : declared ? "Declared" : "Not declared";
+
+      els.blendState.className = "value " +
+        (earning ? "status-online" : declared ? "status-bootstrapping" : "status-offline");
+      els.blendState.textContent = earning ? "Earning" : declared ? "Declared" : "Not declared";
+      els.blendPeers.textContent = b.core_peers ?? "-";
+      els.blendNonce.textContent = b.nonce ?? "-";
+      els.blendActive.textContent = b.active ?? "-";
+      els.blendLocator.textContent = b.locator || "-";
+      els.blendDecl.textContent = b.declaration_id ? shortId(b.declaration_id) : "-";
+      els.blendDecl.title = b.declaration_id || "";
+
+      if (declared && !earning) {
+        els.blendMeta.textContent = "Declared but not confirmed earning — if the nonce stays flat, the " +
+          "Blend UDP port is likely not reachable from the internet (port-forward it).";
+      } else if (declared) {
+        els.blendMeta.textContent = "This node is an active Blend Core provider.";
+      } else {
+        els.blendMeta.textContent = b.sdp_key_funded === false
+          ? "Not declared. The SDP funding key is empty — fund it, then join."
+          : "Not declared. Join to become a Blend Core provider.";
+      }
+
+      if (b.actions_enabled) {
+        els.blendActions.style.display = "flex";
+        els.blendActionsHint.style.display = "none";
+        if (!blendBusy) {
+          els.blendJoinBtn.disabled = declared;
+          els.blendWithdrawBtn.disabled = !declared;
+        }
+      } else {
+        els.blendActions.style.display = "none";
+        els.blendActionsHint.style.display = "block";
+      }
+    }
+
+    let blendBusy = false;
+    async function runBlendAction(action) {
+      const verb = action === "join" ? "join Blend Core" : "withdraw the Blend declaration";
+      const warning = action === "join"
+        ? "This is an ON-CHAIN action: it locks a note as stake, pays a fee, and publishes this node's public IP on-chain.\n\nProceed to join Blend Core?"
+        : "This schedules withdrawal of your Blend declaration (it winds down over a couple of epochs).\n\nProceed?";
+      if (!window.confirm(warning)) return;
+      blendBusy = true;
+      els.blendJoinBtn.disabled = true;
+      els.blendWithdrawBtn.disabled = true;
+      els.blendActionMsg.textContent = `Running ${verb}… (this can take up to ~2 min)`;
+      els.blendError.textContent = "";
+      els.blendOutput.style.display = "block";
+      els.blendOutput.textContent = `$ join_blend_core.py ${action}\n`;
+      try {
+        const res = await fetch(`/api/blend/${action}`, { method: "POST" });
+        const data = await res.json();
+        els.blendOutput.textContent = data.output || "(no output)";
+        if (!res.ok || !data.ok) {
+          els.blendError.textContent = data.error || `Blend ${action} failed`;
+        } else {
+          els.blendActionMsg.textContent = `Done: ${verb}.`;
+        }
+      } catch (err) {
+        els.blendError.textContent = String(err);
+      } finally {
+        blendBusy = false;
+        await loadStatus();      // refresh badge/cards from the new on-chain state
+      }
     }
 
     async function loadStatus() {
@@ -376,6 +543,7 @@
           els.peerCount.textContent = "-";
           els.peerCount.title = data.network?.error || "";
         }
+        renderBlend(data.blend);
         els.tip.textContent = data.tip ?? "-";
         els.lib.textContent = data.lib ?? "-";
         els.apiUrl.textContent = data.url ?? "-";
@@ -482,6 +650,9 @@
     async function refreshPanels() {
       await Promise.all([loadStatus(), loadLogs()]);
     }
+
+    els.blendJoinBtn.addEventListener("click", () => runBlendAction("join"));
+    els.blendWithdrawBtn.addEventListener("click", () => runBlendAction("withdraw"));
 
     refreshPanels();
     loadProposals();

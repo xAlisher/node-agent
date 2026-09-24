@@ -34,6 +34,9 @@ dashboard/run.sh                      # local dashboard on :8090, reached over y
   raw binary — the same way the official docs tell strangers to do it.
 - **A dashboard** (stdlib Python, no pip) showing state / height / peers / wallet balance, reachable from
   your phone over Tailscale.
+- **Opt-in Blend Core** — once the node is green, `node-setup/scripts/join_blend_core.py` makes it a Blend
+  provider (the referral-program eligibility gate): observable `status` / `join` / `withdraw`, and a Blend
+  panel on the dashboard. On-chain join is gated behind an explicit go (locks stake, pays a fee, publishes IP).
 - **Sudo-free** end to end (the box's one-time `apt` prep and reboot-persistence are the only sudo touches).
 - An agent that **resumes intelligently**: box not ready → optional box-setup; box ready, no node →
   node-setup; node already green → just verify + dashboard.
@@ -45,7 +48,8 @@ dashboard/run.sh                      # local dashboard on :8090, reached over y
 | **[AGENT.md](AGENT.md)** | The orchestrator your agent reads first (assess → ask → route → resume). |
 | `scripts/assess.sh` | Read-only probe: what's on the box + the next step. |
 | `node-setup/` | The node — [`README.md`](node-setup/README.md) (runbook), `config/node.env` (bump per release), `scripts/`. |
-| `dashboard/` | The local dashboard (`:8090`, tailnet-reachable). |
+| `dashboard/` | The local dashboard (`:8090`, tailnet-reachable) — sync/height/peers/wallet + a **Blend Core** panel. |
+| `node-setup/scripts/join_blend_core.py` | Opt-in: make the node a **Blend Core** provider (`status`/`join`/`withdraw`), observable. See `skills/logos-node-blend-core.md`. |
 | `box-setup/` | **Optional** fresh-box prep (Ubuntu / deps / Tailscale / Claude Code / BIOS). *Skipped in workshops.* |
 | `skills/` | Recovery + pitfall playbooks (crash-loop, circuits/wallet, proposals, state-copy). |
 

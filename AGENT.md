@@ -88,6 +88,20 @@ lines), and surface anything that needs them promptly.
 `n_peers > 0` **and** `height` climbing → eventually `state: Online`. Judge by **height**, never by any UI
 label (the GUI mislabels the network). `node-setup/scripts/healthcheck.sh` encodes this.
 
+## 5b. Optional, only once green: join Blend Core
+
+If the operator wants the node to **earn as a Blend Core provider** (the eligibility gate the referral
+program's rewards rely on), there is a dedicated skill: **[`skills/logos-node-blend-core.md`](skills/logos-node-blend-core.md)**,
+driven by **`node-setup/scripts/join_blend_core.py`** (stdlib, observable — every step prints, `--json`
+for a machine-readable result).
+
+- **Never** before green, and **never** on your own initiative — offer it, don't assume it.
+- Always run `join_blend_core.py status` first (read-only) and report it back.
+- `join` is **on-chain**: it locks a note as stake, pays a fee, and publishes the node's public IP.
+  Get an explicit operator **go** before running it with `--yes`.
+- After joining, the operator **must port-forward the Blend UDP port** or the node declares but never
+  earns (nonce stays flat). The script prints the port and a reminder; the skill has the detail.
+
 ## 6. When it's green: present the final report  ·  (your closing message)
 
 Once `healthcheck.sh` is GREEN and the dashboard is up, give the operator a clear closing report — **what you
@@ -144,7 +158,9 @@ Always include the **dashboard link** (the node's "face") and the one-line statu
 - `scripts/assess.sh` — state probe (run first)
 - `node-setup/` — the node: `README.md` (runbook), `config/node.env` (bump per release), `scripts/`
   (`setup-node.sh`, `healthcheck.sh`, `fund-node.sh` (curl the faucet — no web form),
+  `join_blend_core.py` (opt-in Blend Core provider: status/join/withdraw, observable),
   `install-persistence.sh` + `start-on-boot.sh` (sudo-free reboot survival, installed by default), `uninstall.sh`)
-- `dashboard/` — local Python dashboard on `:8090`, reached over the tailnet (0.2.x-schema-aware)
+- `dashboard/` — local Python dashboard on `:8090`, reached over the tailnet (0.2.x-schema-aware; shows a
+  Blend Core panel, with opt-in join/withdraw behind `BLEND_ACTIONS=1`)
 - `box-setup/` — optional fresh-box prep (Ubuntu / deps / Tailscale / Claude Code), reference docs
-- `skills/` — recovery + pitfall playbooks (crash-loop, circuits/wallet, proposals, state-copy)
+- `skills/` — recovery + pitfall playbooks (crash-loop, circuits/wallet, proposals, state-copy, **blend-core**)

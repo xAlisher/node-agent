@@ -33,6 +33,12 @@ if [[ -z "$WALLET_PUBLIC_KEY" && -f "$NODE_CONFIG" ]]; then
   WALLET_PUBLIC_KEY="$(grep -A1 known_keys "$NODE_CONFIG" | tail -1 | tr -d " " | cut -d: -f1)"
 fi
 
+# Blend Core: status is always shown; the on-chain join/withdraw buttons are OFF unless BLEND_ACTIONS
+# is set truthy (the dashboard is unauthenticated and join/withdraw lock stake + pay a fee + publish IP).
+BLEND_ACTIONS="${BLEND_ACTIONS:-0}"
+BLEND_FLAG=()
+case "$BLEND_ACTIONS" in 1|true|yes|on) BLEND_FLAG=(--allow-blend-actions) ;; esac
+
 cd "$RUNBOOK_ROOT"
 exec python3 dashboard/server.py \
   --host "$HOST" \
@@ -40,4 +46,6 @@ exec python3 dashboard/server.py \
   --node-api "$NODE_API" \
   --log-dir "$NODE_LOG_DIR" \
   --node-unit "$NODE_UNIT" \
-  --wallet-public-key "$WALLET_PUBLIC_KEY"
+  --wallet-public-key "$WALLET_PUBLIC_KEY" \
+  --node-config "$NODE_CONFIG" \
+  "${BLEND_FLAG[@]}"

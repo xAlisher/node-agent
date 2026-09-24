@@ -8,6 +8,7 @@ import mimetypes
 import os
 import re
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -20,6 +21,10 @@ from threading import Lock
 
 ROOT = Path(__file__).resolve().parent
 RUNBOOK_ROOT = ROOT.parent
+# Blend Core: the dashboard delegates the on-chain join/withdraw + status read to the shared,
+# audited script (single source of truth) rather than re-implementing the money path here.
+BLEND_SCRIPT = RUNBOOK_ROOT / "node-setup" / "scripts" / "join_blend_core.py"
+DEFAULT_NODE_CONFIG = os.environ.get("NODE_CONFIG", str(Path.home() / "logos-node" / "user_config.yaml"))
 DEFAULT_NODE_API = "http://127.0.0.1:8080"
 DEFAULT_NODE_BINARY = Path(os.environ.get("NODE_BINARY", str(RUNBOOK_ROOT / "artifacts/node/logos-blockchain-node")))
 DEFAULT_LOG_DIR = RUNBOOK_ROOT / "state/live-v0.1.2/logs"
@@ -271,6 +276,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
     log_dir = DEFAULT_LOG_DIR
     node_unit = DEFAULT_NODE_UNIT
     wallet_public_key = ""
+    node_config = DEFAULT_NODE_CONFIG
+    blend_script = str(BLEND_SCRIPT)
+    allow_blend_actions = False           # mutating join/withdraw from the (unauthenticated) UI, off by default
+    _blend_cache: dict = {}
+    _blend_cache_lock = Lock()
+    _blend_cache_ts: float = 0.0
+    _BLEND_CACHE_TTL: float = 15.0
     proposal_cache_lock = Lock()
     proposal_cache_last_refresh = 0.0
     proposal_cache: dict = {"summary": {}, "recent": []}
@@ -299,7 +311,31 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_error(HTTPStatus.NOT_FOUND, "Not found")
 
     def do_POST(self) -> None:
+        if self.path in ("/api/blend/join", "/api/blend/withdraw"):
+            self._serve_blend_action("join" if self.path.endswith("join") else "withdraw")
+            return
         self.send_error(HTTPStatus.NOT_FOUND, "Not found")
+
+    def _serve_blend_action(self, action: str) -> None:
+        # Draining the request body avoids a broken pipe on the client side.
+        try:
+            length = int(self.headers.get("Content-Length", 0) or 0)
+            if length:
+                self.rfile.read(length)
+        except (ValueError, OSError):
+            pass
+        if not type(self).allow_blend_actions:
+            self._send_json(
+                {"ok": False,
+                 "error": "Blend actions are disabled on this dashboard. It is unauthenticated and "
+                          "join/withdraw are on-chain (locks stake, pays a fee, publishes your IP). "
+                          "Enable deliberately with BLEND_ACTIONS=1 on a trusted network, or run "
+                          "node-setup/scripts/join_blend_core.py on the box."},
+                status=HTTPStatus.FORBIDDEN,
+            )
+            return
+        run = type(self)._run_blend(action)
+        self._send_json(run, status=HTTPStatus.OK if run.get("ok") else HTTPStatus.BAD_GATEWAY)
 
     def log_message(self, fmt: str, *args) -> None:
         return
@@ -359,6 +395,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         payload["network"] = self._network_info()
         payload["wallet"] = self._wallet_balance()
         payload["voucher_count"] = self._voucher_count()
+        payload["blend"] = self._blend_status()
         self._send_json(payload)
 
     def _voucher_count(self) -> int:
@@ -447,6 +484,68 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "url": url,
             "error": "Unexpected network info response",
         }
+
+    @classmethod
+    def _run_blend(cls, action: str, timeout: float = 150.0) -> dict:
+        """Run join_blend_core.py <action> --json and return {ok, output, result}.
+
+        `status` is safe to run any time; `join`/`withdraw` mutate on-chain and pass --yes."""
+        cmd = [sys.executable, cls.blend_script, action,
+               "--config", cls.node_config, "--node-api", cls.node_api, "--json"]
+        if action in ("join", "withdraw"):
+            cmd.append("--yes")
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        except FileNotFoundError:
+            return {"ok": False, "error": f"blend script not found: {cls.blend_script}", "output": ""}
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "error": f"blend {action} timed out after {int(timeout)}s", "output": ""}
+        combined = (proc.stdout or "") + (proc.stderr or "")
+        result = None
+        for line in reversed(combined.splitlines()):
+            if line.startswith("RESULT:"):
+                try:
+                    result = json.loads(line[len("RESULT:"):].strip())
+                except json.JSONDecodeError:
+                    result = None
+                break
+        return {
+            "ok": proc.returncode == 0 and (result or {}).get("ok", proc.returncode == 0),
+            "exit_code": proc.returncode,
+            "output": combined.strip(),
+            "result": result,
+        }
+
+    def _blend_status(self) -> dict:
+        cls = type(self)
+        now = time.time()
+        if cls._blend_cache and now - cls._blend_cache_ts < cls._BLEND_CACHE_TTL:
+            return dict(cls._blend_cache)
+        with cls._blend_cache_lock:
+            if cls._blend_cache and time.time() - cls._blend_cache_ts < cls._BLEND_CACHE_TTL:
+                return dict(cls._blend_cache)
+            run = cls._run_blend("status", timeout=20.0)
+            res = run.get("result") or {}
+            status = {
+                "ok": bool(res.get("ok")),
+                "supported": True,
+                "declared": bool(res.get("declared")),
+                "sdp_key_funded": res.get("sdp_key_funded"),
+                "nonce": res.get("nonce"),
+                "core_peers": res.get("core_peers"),
+                "created": res.get("created"),
+                "active": res.get("active"),
+                "withdraw_at": res.get("withdraw_at"),
+                "locator": res.get("locator"),
+                "declaration_id": res.get("declaration_id"),
+                "earning": bool((res.get("nonce") or 0) > 0 and (res.get("core_peers") or 0) > 0),
+                "actions_enabled": cls.allow_blend_actions,
+            }
+            if not run.get("result"):
+                status["error"] = run.get("error") or "blend status unavailable"
+            cls._blend_cache = status
+            cls._blend_cache_ts = time.time()
+            return dict(status)
 
     def _serve_logs(self) -> None:
         latest = latest_log_file(self.log_dir)
@@ -538,6 +637,18 @@ def main() -> None:
         default=os.environ.get("WALLET_PUBLIC_KEY", ""),
         help="Wallet public key used for the balance card.",
     )
+    parser.add_argument(
+        "--node-config",
+        default=DEFAULT_NODE_CONFIG,
+        help="Path to the node's user_config.yaml (for the Blend Core panel + actions).",
+    )
+    parser.add_argument(
+        "--allow-blend-actions",
+        action="store_true",
+        default=os.environ.get("BLEND_ACTIONS", "") not in ("", "0", "false", "no"),
+        help="Enable the on-chain Blend join/withdraw buttons (off by default; the dashboard is "
+             "unauthenticated). Also settable via BLEND_ACTIONS=1.",
+    )
     args = parser.parse_args()
 
     DashboardHandler.node_api = args.node_api.rstrip("/")
@@ -546,12 +657,16 @@ def main() -> None:
     DashboardHandler.log_dir = Path(args.log_dir)
     DashboardHandler.node_unit = args.node_unit
     DashboardHandler.wallet_public_key = args.wallet_public_key
+    DashboardHandler.node_config = args.node_config
+    DashboardHandler.allow_blend_actions = bool(args.allow_blend_actions)
 
     server = ThreadingHTTPServer((args.host, args.port), DashboardHandler)
     print(f"Dashboard listening on http://{args.host}:{args.port}")
     print(f"Node API: {DashboardHandler.node_api}")
     print(f"Log dir: {DashboardHandler.log_dir}")
     print(f"Wallet public key: {DashboardHandler.wallet_public_key or '(not configured)'}")
+    print(f"Node config: {DashboardHandler.node_config}")
+    print(f"Blend actions: {'ENABLED' if DashboardHandler.allow_blend_actions else 'disabled (status only)'}")
     server.serve_forever()
 
 
