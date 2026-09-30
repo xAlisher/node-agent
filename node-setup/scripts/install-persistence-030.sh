@@ -9,7 +9,8 @@ BOOT="$HERE/scripts/start-030-on-boot.sh"
 chmod +x "$BOOT" 2>/dev/null || true
 MARKER="# logos-node-agent @reboot persistence (0.3.0 raw node)"
 ENVPREFIX=""
-[ -n "${NODE_TMUX:-}" ] && ENVPREFIX="NODE_TMUX=$NODE_TMUX "
+[ -n "${NODE_HOME:-}" ] && ENVPREFIX="NODE_HOME=$NODE_HOME "
+[ -n "${NODE_TMUX:-}" ] && ENVPREFIX="${ENVPREFIX}NODE_TMUX=$NODE_TMUX "
 [ -n "${API_PORT:-}" ]  && ENVPREFIX="${ENVPREFIX}API_PORT=$API_PORT "
 LINE="@reboot ${ENVPREFIX}$BOOT   $MARKER"
 
