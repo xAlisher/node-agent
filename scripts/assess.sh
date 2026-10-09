@@ -53,9 +53,15 @@ have crontab && crontab -l 2>/dev/null | grep -Fq 'logos-node-agent @reboot' && 
 say "  reboot-persistence=$PERSIST (sudo-free @reboot cron)"
 
 # ── dashboard ──
-DASH=$(curl -s --max-time 4 -o /dev/null -w '%{http_code}' "http://localhost:8090/" 2>/dev/null || echo 000)
+# It binds the Tailscale IP by default (else localhost), so try both.
+DASH=000; DASH_URL="http://localhost:8090"
+for h in "$(tailscale ip -4 2>/dev/null | head -1)" 127.0.0.1; do
+  [ -n "$h" ] || continue
+  c=$(curl -s --max-time 4 -o /dev/null -w '%{http_code}' "http://$h:8090/" 2>/dev/null || echo 000)
+  if [ "$c" = 200 ]; then DASH=200; DASH_URL="http://$h:8090"; break; fi
+done
 say ""; say "DASHBOARD"
-say "  http://localhost:8090 → $([ "$DASH" = 200 ] && echo UP || echo down)"
+say "  $DASH_URL → $([ "$DASH" = 200 ] && echo UP || echo down)"
 
 # ── recommendation ──
 say ""; say "──────── RECOMMENDATION ────────"

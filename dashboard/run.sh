@@ -1,51 +1,21 @@
 #!/usr/bin/env bash
+# Start the node dashboard on :8090 (foreground; start-on-boot.sh runs it in tmux 'dashboard').
+#
+# Default: the Logos node web UI (https://github.com/xAlisher/logos-node-webui), the same UI as the
+# official node app and the DAppNode package. Fetched on first run into ~/logos-node-webui; update
+# with dashboard/fetch-webui.sh. Its server proxies /api to the node, so it works with any node that
+# serves the HTTP API (logosctl + blockchain_module 0.3.x, or the standalone binary).
+#
+# DASHBOARD=legacy runs the older runbook dashboard (dashboard/run-legacy.sh: logs, zone-board).
+#
+# Env: HOST (default: Tailscale IPv4, else 127.0.0.1), PORT (8090), NODE_API (http://127.0.0.1:8080).
+# The UI has mining + wallet actions and no login: HOST=0.0.0.0 only on a trusted network.
 set -euo pipefail
-
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-RUNBOOK_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
-
-# Defaults are aligned to what node-setup actually produces (~/logos-node) — override any via env.
-NS_ENV="$RUNBOOK_ROOT/node-setup/config/node.env"
-[ -f "$NS_ENV" ] && source "$NS_ENV" 2>/dev/null || true
-NODE_HOME="${NODE_HOME:-$HOME/logos-node}"
-
-# Bind to THIS box's Tailscale IP by default: reachable from your phone over the tailnet, but NOT exposed
-# on a public NIC. Falls back to loopback if Tailscale isn't up. The dashboard is unauthenticated and
-# serves node logs, so binding all interfaces must be a deliberate choice: set HOST=0.0.0.0 explicitly
-# (only on a trusted/NAT'd network).
-if [ -z "${HOST:-}" ]; then
-  HOST="$(tailscale ip -4 2>/dev/null | head -1 || true)"
-  HOST="${HOST:-127.0.0.1}"
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [ "${DASHBOARD:-webui}" = legacy ]; then
+  exec bash "$HERE/run-legacy.sh"
 fi
-PORT="${PORT:-8090}"
-NODE_API="${NODE_API:-${API:-http://127.0.0.1:8080}}"
-NODE_LOG_DIR="${NODE_LOG_DIR:-$NODE_HOME}"
-NODE_CONFIG="${NODE_CONFIG:-$NODE_HOME/user_config.yaml}"
-NODE_UNIT="${NODE_UNIT:-}"                       # the logoscore path has no systemd unit
-export NODE_BINARY="${NODE_BINARY:-}"            # nor a raw binary
-WALLET_PUBLIC_KEY="${WALLET_PUBLIC_KEY:-}"
-
-if [[ -z "$WALLET_PUBLIC_KEY" && -f "$NODE_CONFIG" ]]; then
-  WALLET_PUBLIC_KEY="$(awk '/funding_pk:/ { print $2; exit }' "$NODE_CONFIG" | tr -d '"')"
-fi
-
-if [[ -z "$WALLET_PUBLIC_KEY" && -f "$NODE_CONFIG" ]]; then
-  WALLET_PUBLIC_KEY="$(grep -A1 known_keys "$NODE_CONFIG" | tail -1 | tr -d " " | cut -d: -f1)"
-fi
-
-# Blend Core: status is always shown; the on-chain join/withdraw buttons are OFF unless BLEND_ACTIONS
-# is set truthy (the dashboard is unauthenticated and join/withdraw lock stake + pay a fee + publish IP).
-BLEND_ACTIONS="${BLEND_ACTIONS:-0}"
-BLEND_FLAG=()
-case "$BLEND_ACTIONS" in 1|true|yes|on) BLEND_FLAG=(--allow-blend-actions) ;; esac
-
-cd "$RUNBOOK_ROOT"
-exec python3 dashboard/server.py \
-  --host "$HOST" \
-  --port "$PORT" \
-  --node-api "$NODE_API" \
-  --log-dir "$NODE_LOG_DIR" \
-  --node-unit "$NODE_UNIT" \
-  --wallet-public-key "$WALLET_PUBLIC_KEY" \
-  --node-config "$NODE_CONFIG" \
-  "${BLEND_FLAG[@]}"
+WEBUI_DIR="${WEBUI_DIR:-$HOME/logos-node-webui}"
+[ -x "$WEBUI_DIR/run.sh" ] || bash "$HERE/fetch-webui.sh"
+export NODE_API="${NODE_API:-${API:-http://127.0.0.1:8080}}"
+exec bash "$WEBUI_DIR/run.sh"

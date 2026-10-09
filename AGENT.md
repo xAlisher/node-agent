@@ -160,7 +160,9 @@ Always include the **dashboard link** (the node's "face") and the one-line statu
   (`setup-node.sh`, `healthcheck.sh`, `fund-node.sh` (curl the faucet — no web form),
   `join_blend_core.py` (opt-in Blend Core provider: status/join/withdraw, observable),
   `install-persistence.sh` + `start-on-boot.sh` (sudo-free reboot survival, installed by default), `uninstall.sh`)
-- `dashboard/` — local Python dashboard on `:8090`, reached over the tailnet (0.2.x-schema-aware; shows a
-  Blend Core panel, with opt-in join/withdraw behind `BLEND_ACTIONS=1`)
+- `dashboard/` — `run.sh` brings up the node web UI (logos-node-webui release, fetched on first run into
+  `~/logos-node-webui`; update with `fetch-webui.sh`) on `:8090`, reached over the tailnet. It has mining and
+  wallet actions and no login, so keep it on Tailscale. `DASHBOARD=legacy` runs the older runbook dashboard
+  (`run-legacy.sh`: logs, zone-board, Blend Core panel with opt-in join/withdraw behind `BLEND_ACTIONS=1`)
 - `box-setup/` — optional fresh-box prep (Ubuntu / deps / Tailscale / Claude Code), reference docs
 - `skills/` — recovery + pitfall playbooks (crash-loop, circuits/wallet, proposals, state-copy, **blend-core**)

@@ -1,5 +1,12 @@
 # Logos Node Dashboard
 
+> **Default is now the Logos node web UI.** `dashboard/run.sh` fetches the
+> [logos-node-webui](https://github.com/xAlisher/logos-node-webui) release (`fetch-webui.sh`, into
+> `~/logos-node-webui`) and serves it on `:8090`, proxying `/api` to the node. It matches the official node
+> app and works with 0.3.x nodes. Update: `dashboard/fetch-webui.sh`, then restart the `dashboard` tmux session.
+> The rest of this page documents the **legacy** runbook dashboard: start it with
+> `DASHBOARD=legacy dashboard/run.sh` (it calls `run-legacy.sh`).
+
 Small local dashboard for a Logos Blockchain node and `zone-board`.
 
 Compatible with:
@@ -39,7 +46,7 @@ No Python package install is required; the server uses only the standard library
 From the runbook root:
 
 ```bash
-./dashboard/run.sh
+DASHBOARD=legacy ./dashboard/run.sh
 ```
 
 Open:
@@ -66,7 +73,7 @@ WALLET_PUBLIC_KEY=
 Example:
 
 ```bash
-ZONE_CHANNEL=alice ./dashboard/run.sh
+ZONE_CHANNEL=alice DASHBOARD=legacy ./dashboard/run.sh
 ```
 
 If your node logs or zone-board state are somewhere else:
@@ -75,7 +82,7 @@ If your node logs or zone-board state are somewhere else:
 NODE_LOG_DIR=/path/to/node/logs \
 ZONE_BOARD_DIR=/path/to/zone-board-state \
 ZONE_CHANNEL=alice \
-./dashboard/run.sh
+DASHBOARD=legacy ./dashboard/run.sh
 ```
 
 You can also call the server directly:
