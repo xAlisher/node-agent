@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# healthcheck-030.sh — is the RAW 0.3.0 node green? Checks: API up, on the 0.3.0 chain, Online,
+# healthcheck-030.sh — is the RAW 0.3.x node green? Checks: API up, on the current chain (GENESIS_MS), Online,
 # height climbing, PoW mining on. Prints a one-line verdict; exit 0 = green. Reads config/node-030.env.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$HERE/config/node-030.env" 2>/dev/null || true
 API="${API:-http://127.0.0.1:${API_PORT:-8080}}"
-EXPECT_GENESIS="${EXPECT_GENESIS:-1790758800000}"   # 0.3.0 testnet genesis; bump per re-genesis
+EXPECT_GENESIS="${EXPECT_GENESIS:-${GENESIS_MS:-1791556200000}}"   # from node-030.env; bump per re-genesis
 
 j() { python3 -c "import json,sys;d=json.load(sys.stdin);print($1)" 2>/dev/null; }
 

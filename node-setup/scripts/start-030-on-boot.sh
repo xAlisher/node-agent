@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# start-030-on-boot.sh — bring the RAW 0.3.0 node (logos-blockchain-node) back up after a reboot.
+# start-030-on-boot.sh — bring the RAW 0.3.x node (logos-blockchain-node) back up after a reboot.
 # SUDO-FREE: invoked by a user `@reboot` crontab entry (install-persistence-030.sh). Idempotent: if the
 # node API already answers it leaves it. cron runs with a bare env, so we set HOME/PATH and log to boot.log.
 # Supersedes start-on-boot.sh (which started the 0.2.x logoscore + module dead-chain path).

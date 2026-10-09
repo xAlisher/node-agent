@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# setup-node-030.sh — bring a box to a running Logos 0.3.0+ blockchain node using the RAW single-binary
+# setup-node-030.sh — bring a box to a running Logos 0.3.x blockchain node (currently 0.3.1, the 10-09 relaunch) using the RAW single-binary
 # architecture (logos-blockchain-node). Supersedes setup-node.sh (logoscore+module) for 0.3.0+.
 # Verified end-to-end on sneg 2026-09-30 (parallel node → correct 0.3.0 genesis, syncing, mining armed).
 #
@@ -27,8 +27,8 @@ ok "x86_64 · NODE_HOME=$NODE_HOME · swarm=$SWARM_PORT api=$API_PORT"
 
 # ── Step 1: fetch the node binary ────────────────────────────────────────────
 log "Fetch logos-blockchain-node ${NODE_VERSION}"
-if [ -x "$NODE_HOME/logos-blockchain-node" ] && "$NODE_HOME/logos-blockchain-node" --help >/dev/null 2>&1; then
-  ok "binary already present"
+if [ -x "$NODE_HOME/logos-blockchain-node" ] && "$NODE_HOME/logos-blockchain-node" --version 2>/dev/null | head -1 | grep -q " ${NODE_VERSION}$"; then
+  ok "binary ${NODE_VERSION} already present"
 else
   if command -v gh >/dev/null 2>&1; then
     gh release download "$NODE_VERSION" --repo "$NODE_RELEASE_REPO" --pattern "$NODE_ASSET" --dir "$NODE_HOME" --clobber
@@ -41,9 +41,25 @@ else
   ok "extracted $NODE_ASSET"
 fi
 # The network (testnet/devnet + ver) is baked into the binary; a mismatch = connects-but-never-syncs.
-# We can't always read it from strings on 0.3.0, so the real check is Step 5 (correct genesis + height climbing).
+# The real check is Step 5 (correct genesis + height climbing).
 
-# ── Step 2: generate a fresh config + keystore (once) ────────────────────────
+# ── Step 2: generate a fresh config + keystore (once per chain) ──────────────
+# A config from another chain (e.g. 0.3.0 before the 10-09 relaunch) still points at that chain's blocks in
+# ./state, and the node panics replaying them ("The chain can't be recovered from storage ... FutureBlock").
+# The chain a config belongs to is recorded in .chain-version; installs from before that marker are 0.3.0.
+MARK="$NODE_HOME/.chain-version"
+if [ -f "$NODE_HOME/user_config.yaml" ]; then
+  OLD="$(cat "$MARK" 2>/dev/null || echo 0.3.0)"
+  if [ "$OLD" != "$NODE_VERSION" ]; then
+    log "Chain changed ($OLD -> $NODE_VERSION): moving the old config, keys and chain data aside"
+    tmux kill-session -t node 2>/dev/null || true
+    pkill -f "$NODE_HOME/logos-blockchain-node" 2>/dev/null || pkill -f "./logos-blockchain-node user_config.yaml" 2>/dev/null || true
+    sleep 2
+    ARCH="$NODE_HOME/oldchain-$OLD"; mkdir -p "$ARCH"
+    for f in user_config.yaml keystore.yaml state db; do if [ -e "$NODE_HOME/$f" ]; then mv "$NODE_HOME/$f" "$ARCH/"; fi; done
+    ok "moved to $ARCH (old keys kept there; the new chain gets fresh keys)"
+  fi
+fi
 log "Init user_config.yaml + keystore.yaml (fresh keys)"
 if [ -f "$NODE_HOME/user_config.yaml" ]; then
   ok "user_config.yaml exists (leaving it — delete to regenerate; note: new chain = fresh keys)"
@@ -51,6 +67,7 @@ else
   "$NODE_HOME/logos-blockchain-node" init-config -o "$NODE_HOME/user_config.yaml" -k "$NODE_HOME/keystore.yaml" --overwrite
   ok "generated"
 fi
+echo "$NODE_VERSION" > "$MARK"
 
 # ── Step 3: patch config (ports, peers, ibd.peers, bootstrap window) ─────────
 log "Patch config (ports, initial_peers, ibd.peers, bootstrap window)"
@@ -106,8 +123,8 @@ else
   ok "launched"
 fi
 
-# ── Step 5: wait for the correct 0.3.0 chain + Online, then enable mining ────
-log "Wait for Online on the 0.3.0 chain, then start PoW mining"
+# ── Step 5: wait for the correct chain + Online, then enable mining ─────────
+log "Wait for Online on the ${NODE_VERSION} chain, then start PoW mining"
 online=0
 for _ in $(seq 1 90); do
   ci=$(curl -s -m5 "$API/cryptarchia/info" 2>/dev/null) || true
@@ -126,6 +143,6 @@ fi
 
 echo
 echo "Node:    tmux attach -t node     (log: $NODE_HOME/node.log)"
-echo "Chain:   curl -s $API/cryptarchia/info | jq   (want state=Online, height climbing; genesis 0.3.0)"
+echo "Chain:   curl -s $API/cryptarchia/info | jq   (want state=Online, height climbing; genesis_time_unix_ms=${GENESIS_MS})"
 echo "Mining:  curl -s $API/pow/status | jq         · claimable: curl -s $API/pow/rewards/claimable | jq"
 echo "Vouchers (leader): curl -s $API/leader/claim/vouchers | jq · claim: curl -X POST $API/leader/claim"

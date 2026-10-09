@@ -38,15 +38,15 @@ below just follows that recommendation. Re-run it any time to see where you are.
 
 Before running node-setup, confirm with the operator (assess can't know these):
 
-- **Which release?** Default: the latest node release (this repo pins it in `node-setup/config/node.env`).
-  If they want a specific one, bump `node-setup/config/node.env` (module version + bootstrap peers from that
-  release's notes).
+- **Which release?** Default: the current testnet node, pinned in `node-setup/config/node-030.env`
+  (**0.3.1**, the Oct 9 2026 relaunch: new genesis, balances reset). If they want a specific one, bump
+  `NODE_VERSION`, `GENESIS_MS` and the bootstrap peers there from that release's notes.
 - **Sync from a snapshot or from scratch?** From scratch is ~1h but always correct. A snapshot is fast but
   must be **post-genesis for the target release** (the testnet re-genesises each release — a stale snapshot =
   wrong/dead chain). If unsure, sync from scratch.
 - **Dashboard?** Default **yes** — a phone-viewable dashboard on `:8090` over the tailnet.
 
-**Don't ask whether the node should survive a reboot — it should, always.** `setup-node.sh` installs
+**Don't ask whether the node should survive a reboot — it should, always.** `install-persistence-030.sh` installs
 reboot-persistence **by default and sudo-free** (a user `@reboot` crontab that restarts the node + dashboard —
 no `systemd` linger, no sudo). The node already survives SSH logout (detached daemon + tmux). The *only*
 optional extra is surviving a full power **outage**, which needs a one-time BIOS "Restore on AC Power Loss →
@@ -61,11 +61,11 @@ you're about to do, how long it takes, and where you'll need them.** Then ask pe
 
 > Here's what I found: your box is ready (Ubuntu, Tailscale, deps all good) and there's **no node yet**.
 > So my plan is:
-> 1. Install the Logos node tools + the pinned `blockchain_module` package (currently 0.2.4) *(~2 min)*
-> 2. Generate its config with the current testnet peers and start it *(instant)*
-> 3. Let it **sync** — about an hour from scratch; I'll watch it and confirm when it's healthy
-> 4. Bring up a little **dashboard** you can open from your phone
-> 5. Point you to the **faucet** to fund it (needs you — a quick web form)
+> 1. Download the Logos node (`logos-blockchain-node` 0.3.1, a single binary) *(~1 min)*
+> 2. Generate its config + keys with the current testnet peers and start it *(instant)*
+> 3. Let it **bootstrap** — about an hour before it reads Online; I'll watch it and confirm when it's healthy
+> 4. Start **PoW mining** so it funds itself (1 CPU thread, stops at a balance threshold; no faucet)
+> 5. Bring up the **node web UI** you can open from your phone
 >
 > Everything's local and reversible, no admin/sudo needed. Want me to go ahead?
 
@@ -78,15 +78,21 @@ lines), and surface anything that needs them promptly.
 | assess says | Do this |
 |---|---|
 | **BOX NOT READY** | Optional: `box-setup/` (Ubuntu, deps, Tailscale, Claude Code, BIOS). *Skipped in workshops — the box is pre-prepped.* Handy for people setting up a fresh box later. |
-| **BOX READY, NO NODE** ← the main path | `node-setup/scripts/setup-node.sh` → `node-setup/scripts/healthcheck.sh`. Read `node-setup/README.md` first. |
-| **NODE INSTALLED BUT STOPPED** | Restart it (assess prints the command). Do **not** re-run `generate_user_config`. See `skills/logos-node-recovery.md`. |
-| **NODE UP & MESHED** | `healthcheck.sh` to confirm green → `dashboard/run.sh` → fund from the faucet. |
-| **NODE RUNNING, not healthy** | `healthcheck.sh` + `skills/` (recovery, crash-loop-tip-lib, circuits-and-wallet-pitfalls). |
+| **BOX READY, NO NODE** ← the main path | `node-setup/scripts/setup-node-030.sh` → `node-setup/scripts/healthcheck-030.sh` → `node-setup/scripts/install-persistence-030.sh`. |
+| **OLD CHAIN / LEGACY LAYOUT** | The node is on a previous genesis (e.g. 0.3.0 before the Oct 9 relaunch) or the 0.2.x logoscore layout. Run `setup-node-030.sh`: it stops the old node and moves its config, keys and chain data to `oldchain-<ver>/` (old state can't be reused: the node panics replaying it), then starts fresh. Tell the operator their old keys are kept there. |
+| **NODE INSTALLED BUT STOPPED** | `node-setup/scripts/start-030-on-boot.sh`. See `skills/logos-node-recovery.md`. |
+| **NODE UP & MESHED** | `healthcheck-030.sh` to confirm green (Online + mining) → `dashboard/run.sh`. |
+| **NODE RUNNING, not healthy** | `healthcheck-030.sh` + `skills/` (recovery, crash-loop-tip-lib, circuits-and-wallet-pitfalls). |
+
+The 0.2.x `logoscore` scripts (`setup-node.sh`, `healthcheck.sh`, `node.env`) are kept for reference only:
+that chain is gone. The official docs now run 0.3.x through `logosctl` + `blockchain_module`
+(https://docs.logos.co/run-a-node); this repo uses the standalone binary, same chain.
 
 ## 5. What "green" means (the only trustworthy signal)
 
 `n_peers > 0` **and** `height` climbing → eventually `state: Online`. Judge by **height**, never by any UI
-label (the GUI mislabels the network). `node-setup/scripts/healthcheck.sh` encodes this.
+label (the GUI mislabels the network). `node-setup/scripts/healthcheck-030.sh` encodes this, plus the
+genesis check (`GENESIS_MS`) and mining on. Online takes ~1h after start (the prolonged bootstrap period).
 
 ## 5b. Optional, only once green: join Blend Core
 
@@ -104,17 +110,17 @@ for a machine-readable result).
 
 ## 6. When it's green: present the final report  ·  (your closing message)
 
-Once `healthcheck.sh` is GREEN and the dashboard is up, give the operator a clear closing report — **what you
+Once `healthcheck-030.sh` is GREEN (or Bootstrapping and climbing) and the dashboard is up, give the operator a clear closing report — **what you
 did and where to watch their node.** Fill in the real values (get the Tailscale IP from `tailscale ip -4` or
 the assess output). Example:
 
 > ✅ **Your Logos node is up and running.**
 >
-> **What I did:** installed the node tools + `blockchain_module` (0.2.4, per node.env), generated its config with the current
-> testnet peers, started it syncing, and brought up a dashboard.
+> **What I did:** downloaded the Logos node (0.3.1, per node-030.env), generated its config + keys with the
+> current testnet peers, started it, set PoW mining to start once it's Online, and brought up the node web UI.
 >
 > **Node status:** `Bootstrapping`, height 12,180 and climbing, **48 peers** — GREEN. It'll reach `Online`
-> after the ~1h bootstrap window. It keeps running on its own (detached daemon + tmux, no login needed) **and
+> after the ~1h bootstrap window. It keeps running on its own (in tmux, no login needed) **and
 > comes back by itself after a reboot** (I installed a sudo-free `@reboot` cron). To also survive a full power
 > outage, set the BIOS "Restore on AC Power Loss → Power On" once.
 >

@@ -4,7 +4,14 @@
 # Read-only: touches nothing. Works with no arguments.
 set -uo pipefail
 API="${API:-http://localhost:8080}"
-NODE_HOME="${NODE_HOME:-$HOME/logos-node}"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Current testnet (v0.3.x) = the raw single-binary node in ~/logos-node-030 (node-030.env). The 0.2.x
+# logoscore layout (~/logos-node) is only detected so it can be called out as legacy.
+GENESIS_MS=""; source "$ROOT/node-setup/config/node-030.env" 2>/dev/null || true
+if [ -z "${NODE_HOME:-}" ]; then
+  NODE_HOME="$HOME/logos-node-030"
+  [ -d "$NODE_HOME" ] || { [ -d "$HOME/logos-node" ] && NODE_HOME="$HOME/logos-node"; }
+fi
 say() { printf '%s\n' "$*"; }
 have(){ command -v "$1" >/dev/null 2>&1; }
 
@@ -29,7 +36,9 @@ BOX_READY=yes
 
 # ── node state ──
 say ""; say "NODE"
-TOOLS=$([ -x "$NODE_HOME/bin/logoscore" ] && echo yes || (have logoscore && echo yes || echo no))
+TOOLS=no; RAW=no
+[ -x "$NODE_HOME/logos-blockchain-node" ] && TOOLS=yes && RAW=yes
+[ "$TOOLS" = no ] && { [ -x "$NODE_HOME/bin/logoscore" ] || have logoscore; } && TOOLS=legacy-logoscore
 CFG=$([ -f "$NODE_HOME/user_config.yaml" ] && echo yes || echo no)
 J=$(curl -s --max-time 5 "$API/cryptarchia/info" 2>/dev/null)
 # a real Logos node answers with a `state`/`mode` and a `height`; anything else on :8080 is not our node
@@ -41,6 +50,11 @@ if [ -n "$st" ] || [ -n "$h" ]; then
   say "  tools=$TOOLS  config=$CFG  api=UP  state=${st:-?}  height=${h:-?}  peers=${peers:-0}"
   NODE_STATE=running
   { [ "$st" = "Online" ] || [ "${peers:-0}" -gt 0 ]; } && GREEN=likely
+  gen=$(curl -s --max-time 5 "$API/time/info" 2>/dev/null | jq -r '.genesis_time_unix_ms // empty' 2>/dev/null)
+  if [ -n "$GENESIS_MS" ] && [ -n "$gen" ] && [ "$gen" != "$GENESIS_MS" ]; then
+    say "  ⚠ OLD CHAIN: genesis=$gen, current testnet ($NODE_VERSION) is $GENESIS_MS"
+    NODE_STATE=old-chain; GREEN=no
+  fi
 else
   [ -n "$J" ] && say "  (something answered on $API but it's not a Logos node — ignoring)"
   say "  tools=$TOOLS  config=$CFG  api=DOWN (no Logos node on $API)"
@@ -71,19 +85,22 @@ if [ "$BOX_READY" != yes ]; then
   [ -n "$MISS" ] && say "    system deps:  sudo apt update && sudo apt install -y$MISS"
   [ "$TS" = "NO" ] && say "    install + log in to Tailscale (box-setup/reference/03-tailscale.md)"
   [ "$ARCH" != x86_64 ] && say "    ⚠ arch $ARCH — this kit targets linux-x86_64"
+elif [ "$NODE_STATE" = old-chain ] || [ "$TOOLS" = legacy-logoscore ]; then
+  say "→ NODE IS ON AN OLD CHAIN / LEGACY LAYOUT. Move to the current testnet ($NODE_VERSION):"
+  say "    node-setup/scripts/setup-node-030.sh   (stops the old node, moves its config/keys/state to oldchain-<ver>/, starts fresh)"
+  say "  then verify:                          node-setup/scripts/healthcheck-030.sh"
 elif [ "$NODE_STATE" = absent ]; then
-  say "→ BOX READY, NO NODE.  Run node-setup:   node-setup/scripts/setup-node.sh"
-  say "  then verify:                          node-setup/scripts/healthcheck.sh"
+  say "→ BOX READY, NO NODE.  Run node-setup:   node-setup/scripts/setup-node-030.sh"
+  say "  then verify:                          node-setup/scripts/healthcheck-030.sh"
 elif [ "$NODE_STATE" = installed-stopped ]; then
-  say "→ NODE INSTALLED BUT STOPPED. Re-start it:   node-setup/scripts/start-on-boot.sh"
-  say "  (launches the daemon in a persistent tmux 'node' with extract-and-run; do NOT re-run generate_user_config — one-shot. See skills/logos-node-recovery.md)"
+  say "→ NODE INSTALLED BUT STOPPED. Re-start it:   node-setup/scripts/start-030-on-boot.sh"
 elif [ "$GREEN" = likely ]; then
-  say "→ NODE IS UP & MESHED. Confirm green:   node-setup/scripts/healthcheck.sh"
+  say "→ NODE IS UP & MESHED. Confirm green:   node-setup/scripts/healthcheck-030.sh   (Online + mining; ~1h after start)"
   [ "$DASH" != 200 ] && say "  then bring up the dashboard:          dashboard/run.sh   (see dashboard/README.md)"
-  [ "$PERSIST" = no ] && say "  ⚠ make it survive reboots (sudo-free): node-setup/scripts/install-persistence.sh"
-  say "  fund it if not yet:                   grep -A3 known_keys $NODE_HOME/user_config.yaml  →  faucet"
+  [ "$PERSIST" = no ] && say "  ⚠ make it survive reboots (sudo-free): node-setup/scripts/install-persistence-030.sh"
+  say "  funding: PoW mining + auto-claim (started by setup-node-030.sh; no faucet needed)"
 else
-  say "→ NODE RUNNING but not clearly healthy. Diagnose:   node-setup/scripts/healthcheck.sh"
+  say "→ NODE RUNNING but not clearly healthy. Diagnose:   node-setup/scripts/healthcheck-030.sh"
   say "  and see skills/ (recovery, crash-loop, circuits-and-wallet)."
 fi
 say ""

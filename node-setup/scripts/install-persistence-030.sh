@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# install-persistence-030.sh — make the RAW 0.3.0 node survive a reboot, sudo-free, via a user @reboot cron.
+# install-persistence-030.sh — make the RAW 0.3.x node survive a reboot, sudo-free, via a user @reboot cron.
 # Also REMOVES any old 0.2.x logoscore boot line (start-on-boot.sh) so a reboot doesn't resurrect the
 # dead-chain node. Idempotent. Pass NODE_TMUX=bcnode (or any env) to bake it into the @reboot line.
 #   e.g. sneg:  NODE_TMUX=bcnode node-setup/scripts/install-persistence-030.sh
@@ -23,7 +23,7 @@ NEW="$(printf '%s\n' "$CUR" \
   | grep -v 'logos-autoclaim' \
   | grep -v '^[[:space:]]*$')"
 { printf '%s\n' "$NEW"; printf '%s\n' "$LINE"; } | grep -v '^[[:space:]]*$' | crontab -
-echo "  ✓ @reboot now runs the 0.3.0 raw-node boot script:"
+echo "  ✓ @reboot now runs the 0.3.x raw-node boot script:"
 echo "      $LINE"
 echo "    Old 0.2.x logoscore boot line + stale autoclaim cron removed (if present)."
 echo "    Undo:  crontab -l | grep -v 'logos-node-agent @reboot persistence (0.3.0' | crontab -"
