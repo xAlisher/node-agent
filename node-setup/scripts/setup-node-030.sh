@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# setup-node-030.sh — bring a box to a running Logos 0.3.x blockchain node (currently 0.3.1, the 10-09 relaunch) using the RAW single-binary
+# setup-node-030.sh — bring a box to a running Logos 0.3.x blockchain node (currently 0.3.2, on the 10-09 relaunch chain) using the RAW single-binary
 # architecture (logos-blockchain-node). Supersedes setup-node.sh (logoscore+module) for 0.3.0+.
 # Verified end-to-end on sneg 2026-09-30 (parallel node → correct 0.3.0 genesis, syncing, mining armed).
+# Re-run it to upgrade: a newer NODE_VERSION on the same CHAIN_VERSION swaps the binary and restarts the node,
+# keeping config, keys and chain data. A new CHAIN_VERSION (re-genesis) moves the old chain aside instead.
 #
 # Ref: https://github.com/logos-blockchain/logos-blockchain/releases
 # Usage:  node-setup/scripts/setup-node-030.sh     (reads config/node-030.env)
@@ -27,9 +29,19 @@ ok "x86_64 · NODE_HOME=$NODE_HOME · swarm=$SWARM_PORT api=$API_PORT"
 
 # ── Step 1: fetch the node binary ────────────────────────────────────────────
 log "Fetch logos-blockchain-node ${NODE_VERSION}"
+stop_node() {
+  tmux kill-session -t node 2>/dev/null || true
+  pkill -f "$NODE_HOME/logos-blockchain-node" 2>/dev/null || pkill -f "./logos-blockchain-node user_config.yaml" 2>/dev/null || true
+  sleep 2
+}
 if [ -x "$NODE_HOME/logos-blockchain-node" ] && "$NODE_HOME/logos-blockchain-node" --version 2>/dev/null | head -1 | grep -q " ${NODE_VERSION}$"; then
   ok "binary ${NODE_VERSION} already present"
 else
+  if [ -x "$NODE_HOME/logos-blockchain-node" ]; then
+    # Upgrade in place: the running node keeps the old binary until restarted, so stop it first.
+    log "Upgrading the binary to ${NODE_VERSION}: stopping the running node (config, keys and chain data are kept)"
+    stop_node
+  fi
   if command -v gh >/dev/null 2>&1; then
     gh release download "$NODE_VERSION" --repo "$NODE_RELEASE_REPO" --pattern "$NODE_ASSET" --dir "$NODE_HOME" --clobber
   else
@@ -46,15 +58,14 @@ fi
 # ── Step 2: generate a fresh config + keystore (once per chain) ──────────────
 # A config from another chain (e.g. 0.3.0 before the 10-09 relaunch) still points at that chain's blocks in
 # ./state, and the node panics replaying them ("The chain can't be recovered from storage ... FutureBlock").
-# The chain a config belongs to is recorded in .chain-version; installs from before that marker are 0.3.0.
+# The chain a config belongs to is recorded in .chain-version (CHAIN_VERSION, not the binary version: a
+# drop-in release like 0.3.2 runs on the 0.3.1 chain); installs from before that marker are 0.3.0.
 MARK="$NODE_HOME/.chain-version"
 if [ -f "$NODE_HOME/user_config.yaml" ]; then
   OLD="$(cat "$MARK" 2>/dev/null || echo 0.3.0)"
-  if [ "$OLD" != "$NODE_VERSION" ]; then
-    log "Chain changed ($OLD -> $NODE_VERSION): moving the old config, keys and chain data aside"
-    tmux kill-session -t node 2>/dev/null || true
-    pkill -f "$NODE_HOME/logos-blockchain-node" 2>/dev/null || pkill -f "./logos-blockchain-node user_config.yaml" 2>/dev/null || true
-    sleep 2
+  if [ "$OLD" != "$CHAIN_VERSION" ]; then
+    log "Chain changed ($OLD -> $CHAIN_VERSION): moving the old config, keys and chain data aside"
+    stop_node
     ARCH="$NODE_HOME/oldchain-$OLD"; mkdir -p "$ARCH"
     for f in user_config.yaml keystore.yaml state db; do if [ -e "$NODE_HOME/$f" ]; then mv "$NODE_HOME/$f" "$ARCH/"; fi; done
     ok "moved to $ARCH (old keys kept there; the new chain gets fresh keys)"
@@ -67,10 +78,10 @@ else
   "$NODE_HOME/logos-blockchain-node" init-config -o "$NODE_HOME/user_config.yaml" -k "$NODE_HOME/keystore.yaml" --overwrite
   ok "generated"
 fi
-echo "$NODE_VERSION" > "$MARK"
+echo "$CHAIN_VERSION" > "$MARK"
 
 # ── Step 3: patch config (ports, peers, ibd.peers, bootstrap window) ─────────
-log "Patch config (ports, initial_peers, ibd.peers, bootstrap window)"
+log "Patch config (ports, initial_peers, ibd.peers, bootstrap window, gossipsub duplicate cache, 0.3.2 metrics format)"
 PATCHER="$NODE_HOME/.patch_config.py"
 cat > "$PATCHER" <<'PYEOF'
 import os, sys, json
@@ -80,18 +91,33 @@ peer_ids = json.loads(os.environ["BOOTSTRAP_PEER_IDS"])
 swarm_port = os.environ["SWARM_PORT"]; api_port = os.environ["API_PORT"]
 boot = os.environ["PROLONGED_BOOTSTRAP_SECS"]
 with open(PATH) as f: lines = f.readlines()
-out=[]; in_swarm=False; done_port=done_ip=done_ibd=False
+out=[]; in_swarm=False; done_port=done_ip=done_ibd=False; in_dup=False; done_dup=False; skip_ip=None; done_metrics=False
 for ln in lines:
     s=ln.rstrip("\n"); st=s.strip()
+    # gossipsub duplicate_cache_time: configs made before 0.3.2 carry 60s, which re-floods the mempool
+    # (0.3.2 #3793 changed only the default, an existing config keeps its value). Raise it to 24h.
+    if st=="duplicate_cache_time:": in_dup=True
+    elif in_dup and st.startswith("secs:"):
+        in_dup=False
+        if st=="secs: 60":
+            ind=s[:len(s)-len(s.lstrip())]; out.append(f"{ind}secs: 86400\n"); done_dup=True; continue
     if st=="swarm:": in_swarm=True
     # swarm.port (first "port: 3000" under swarm)
     if in_swarm and not done_port and st.startswith("port:"):
         ind=s[:len(s)-len(s.lstrip())]; out.append(f"{ind}port: {swarm_port}\n"); done_port=True; continue
-    # initial_peers (multiaddrs)
+    # tracing.metrics: 0.3.2 made it a struct (#3772, openmetrics); a 0.3.1 config's `metrics: None` fails
+    # --check-config with 'invalid type: string "None", expected struct Layer'. Write the 0.3.2 default.
+    if st=="metrics: None":
+        ind=s[:len(s)-len(s.lstrip())]
+        out.append(f"{ind}metrics:\n{ind}  otlp: null\n{ind}  enable_open_metrics: false\n"); done_metrics=True; continue
+    # initial_peers (multiaddrs): replace the existing list, so a re-run doesn't append a second copy
+    if skip_ip is not None:
+        if st.startswith("- ") and s[:len(s)-len(s.lstrip())]==skip_ip: continue
+        skip_ip=None
     if not done_ip and st.startswith("initial_peers:"):
         ind=s[:len(s)-len(s.lstrip())]; out.append(f"{ind}initial_peers:\n")
         for p in peers: out.append(f"{ind}- {p}\n")
-        done_ip=True; continue
+        done_ip=True; skip_ip=ind; continue
     # bootstrap.ibd.peers (bare peer-IDs — the empty-by-default gap)
     if not done_ibd and st=="peers: []" and s.startswith("        peers"):
         ind=s[:len(s)-len(s.lstrip())]; out.append(f"{ind}peers:\n")
@@ -105,13 +131,13 @@ for ln in lines:
         ind=s[:len(s)-len(s.lstrip())]; out.append(f"{ind}prolonged_bootstrap_period: '{float(boot):.9f}'\n"); continue
     out.append(ln)
 with open(PATH,"w") as f: f.writelines(out)
-print(f"port={done_port} initial_peers={done_ip} ibd.peers={done_ibd}")
+print(f"port={done_port} initial_peers={done_ip} ibd.peers={done_ibd} duplicate_cache_time_raised={done_dup} metrics_migrated={done_metrics}")
 PYEOF
 BOOTSTRAP_PEERS="$BOOTSTRAP_PEERS" BOOTSTRAP_PEER_IDS="$BOOTSTRAP_PEER_IDS" \
   SWARM_PORT="$SWARM_PORT" API_PORT="$API_PORT" PROLONGED_BOOTSTRAP_SECS="$PROLONGED_BOOTSTRAP_SECS" \
   python3 "$PATCHER" "$NODE_HOME/user_config.yaml"
 "$NODE_HOME/logos-blockchain-node" --check-config "$NODE_HOME/user_config.yaml" >/dev/null 2>&1 \
-  && ok "config valid" || die "config failed --check-config"
+  && ok "config valid" || die "config failed --check-config (see: $NODE_HOME/logos-blockchain-node --check-config $NODE_HOME/user_config.yaml)"
 
 # ── Step 4: start the node in tmux 'node' ────────────────────────────────────
 log "Start the node (tmux 'node')"

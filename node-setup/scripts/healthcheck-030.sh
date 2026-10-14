@@ -22,9 +22,13 @@ ps=$(curl -s -m8 "$API/pow/status" 2>/dev/null)
 mining=$(echo "$ps" | j 'd["is_mining"]')
 rewards=$(echo "$ps" | j 'd["are_rewards_enabled"]')
 
+ver=$(curl -s -m6 "$API/version" 2>/dev/null | j 'd["version"]')
+[ -n "${NODE_VERSION:-}" ] && [ -n "$ver" ] && [ "$ver" != "$NODE_VERSION" ] \
+  && echo "note: node runs $ver, node-030.env pins $NODE_VERSION (re-run setup-node-030.sh to upgrade)"
+
 climb="no"; [ -n "$h1" ] && [ -n "$h2" ] && [ "$h2" -ge "$h1" ] 2>/dev/null && climb="yes"
 verdict="GREEN"
 [ "$st" = "Online" ] || verdict="AMBER($st)"
 [ "$mining" = "True" ] || verdict="RED(not-mining)"
-echo "$verdict: state=$st height=$h1->$h2 climbing=$climb mining=$mining rewards=$rewards genesis=ok api=$API"
+echo "$verdict: state=$st height=$h1->$h2 climbing=$climb mining=$mining rewards=$rewards genesis=ok version=${ver:-?} api=$API"
 [ "$verdict" = "GREEN" ]

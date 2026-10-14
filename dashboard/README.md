@@ -11,7 +11,9 @@ Small local dashboard for a Logos Blockchain node and `zone-board`.
 
 Compatible with:
 
-- Logos testnet **v0.2 / v0.2.1** (reads liveness from `cryptarchia_info.state`, with a fallback for 0.2.0)
+- Logos testnet **v0.2 / v0.2.1** (reads liveness from `cryptarchia_info.state`, with a fallback for 0.2.0).
+  Written for the retired 0.2.x chain and the old runbook layout (`state/live-v0.1.2`); for a 0.3.x node use
+  the default web UI above.
 
 It shows:
 

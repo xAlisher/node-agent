@@ -39,8 +39,9 @@ below just follows that recommendation. Re-run it any time to see where you are.
 Before running node-setup, confirm with the operator (assess can't know these):
 
 - **Which release?** Default: the current testnet node, pinned in `node-setup/config/node-030.env`
-  (**0.3.1**, the Oct 9 2026 relaunch: new genesis, balances reset). If they want a specific one, bump
-  `NODE_VERSION`, `GENESIS_MS` and the bootstrap peers there from that release's notes.
+  (**0.3.2**, a drop-in upgrade on the chain relaunched with 0.3.1 on Oct 9 2026). A release on the same
+  chain only bumps `NODE_VERSION`. A re-genesis (new chain, balances reset) also bumps `CHAIN_VERSION`,
+  `GENESIS_MS` and the bootstrap peers, from that release's notes.
 - **Sync from a snapshot or from scratch?** From scratch is ~1h but always correct. A snapshot is fast but
   must be **post-genesis for the target release** (the testnet re-genesises each release — a stale snapshot =
   wrong/dead chain). If unsure, sync from scratch.
@@ -61,7 +62,7 @@ you're about to do, how long it takes, and where you'll need them.** Then ask pe
 
 > Here's what I found: your box is ready (Ubuntu, Tailscale, deps all good) and there's **no node yet**.
 > So my plan is:
-> 1. Download the Logos node (`logos-blockchain-node` 0.3.1, a single binary) *(~1 min)*
+> 1. Download the Logos node (`logos-blockchain-node` 0.3.2, a single binary) *(~1 min)*
 > 2. Generate its config + keys with the current testnet peers and start it *(instant)*
 > 3. Let it **bootstrap** — about an hour before it reads Online; I'll watch it and confirm when it's healthy
 > 4. Start **PoW mining** so it funds itself (1 CPU thread, stops at a balance threshold; no faucet)
@@ -79,10 +80,11 @@ lines), and surface anything that needs them promptly.
 |---|---|
 | **BOX NOT READY** | Optional: `box-setup/` (Ubuntu, deps, Tailscale, Claude Code, BIOS). *Skipped in workshops — the box is pre-prepped.* Handy for people setting up a fresh box later. |
 | **BOX READY, NO NODE** ← the main path | `node-setup/scripts/setup-node-030.sh` → `node-setup/scripts/healthcheck-030.sh` → `node-setup/scripts/install-persistence-030.sh`. |
+| **NODE OUTDATED** (same chain, older binary, e.g. 0.3.1) | Re-run `setup-node-030.sh`: it stops the node, swaps in the new binary, raises the gossipsub duplicate cache to 24h and converts `tracing.metrics: None` to the 0.3.2 format in the existing config (0.3.2 refuses to start with the old line), and restarts. Config, keys, funds and chain data are kept. Then `healthcheck-030.sh`. |
 | **OLD CHAIN / LEGACY LAYOUT** | The node is on a previous genesis (e.g. 0.3.0 before the Oct 9 relaunch) or the 0.2.x logoscore layout. Run `setup-node-030.sh`: it stops the old node and moves its config, keys and chain data to `oldchain-<ver>/` (old state can't be reused: the node panics replaying it), then starts fresh. Tell the operator their old keys are kept there. |
 | **NODE INSTALLED BUT STOPPED** | `node-setup/scripts/start-030-on-boot.sh`. See `skills/logos-node-recovery.md`. |
 | **NODE UP & MESHED** | `healthcheck-030.sh` to confirm green (Online + mining) → `dashboard/run.sh`. |
-| **NODE RUNNING, not healthy** | `healthcheck-030.sh` + `skills/` (recovery, crash-loop-tip-lib, circuits-and-wallet-pitfalls). |
+| **NODE RUNNING, not healthy** | `healthcheck-030.sh`, then read `$NODE_HOME/node.log`. A chain that won't recover (panics replaying blocks, stuck below LIB) is fixed by a resync: stop the node, move `state/` aside, start it (keys survive). The `skills/` recovery playbooks (crash-loop-tip-lib, recovery, circuits) are for the legacy 0.1.x/0.2.x layout. |
 
 The 0.2.x `logoscore` scripts (`setup-node.sh`, `healthcheck.sh`, `node.env`) are kept for reference only:
 that chain is gone. The official docs now run 0.3.x through `logosctl` + `blockchain_module`
@@ -116,7 +118,7 @@ the assess output). Example:
 
 > ✅ **Your Logos node is up and running.**
 >
-> **What I did:** downloaded the Logos node (0.3.1, per node-030.env), generated its config + keys with the
+> **What I did:** downloaded the Logos node (0.3.2, per node-030.env), generated its config + keys with the
 > current testnet peers, started it, set PoW mining to start once it's Online, and brought up the node web UI.
 >
 > **Node status:** `Bootstrapping`, height 12,180 and climbing, **48 peers** — GREEN. It'll reach `Online`

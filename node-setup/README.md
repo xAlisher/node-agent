@@ -1,22 +1,36 @@
-# Logos node 0.2.4 — agent setup runbook
+# Logos node — agent setup runbook
 
 Bring a **clean Ubuntu 24.04 box (tailscale-ssh already up)** to a **green Logos blockchain node
-+ dashboard**, the way the upstream docs prescribe, in one prompt. Built for the 2026-08-13 demo;
-reusable by anyone's agent.
++ dashboard** in one prompt. Built for the EcoDev node workshops; reusable by anyone's agent.
 
 > **Skip** (assumed done): Ubuntu install, SSH/Tailscale, Claude Code login.
-> **Target:** node = `blockchain_module` **0.2.4** via `logoscore`/`lgpd`/`lgpm` (core tools `0.2.0`).
+> **Target:** `logos-blockchain-node` **0.3.2** (the official single-binary release) on the testnet chain
+> relaunched with 0.3.1 on 2026-10-09. Pinned in `config/node-030.env`.
 > **Green** = `n_peers > 0` AND `height` climbing → eventually `state: Online`. Judge by **height**, never the UI.
+
+## Current path (0.3.x raw node)
+
+| # | Do | Command *(run from the repo root)* | sudo? |
+|---|----|--------|-------|
+| 1 | download the binary, generate config + keys, start, mine + auto-claim once Online. Re-run to upgrade a 0.3.1 node in place | `node-setup/scripts/setup-node-030.sh` | no |
+| 2 | verify green (genesis, Online, height climbing, mining) | `node-setup/scripts/healthcheck-030.sh` | no |
+| 3 | survive reboots (user `@reboot` cron) | `node-setup/scripts/install-persistence-030.sh` | no |
+| 4 | node web UI on `:8090`, reached over the tailnet | `dashboard/run.sh` | no |
+| 5 | *(optional)* join Blend Core (needs one 1B note on the Blend ZK key) | `node-setup/scripts/join_blend_core.py status` | no |
+
+Per release: a binary-only release on the same chain bumps `NODE_VERSION` in `config/node-030.env`; a
+re-genesis also bumps `CHAIN_VERSION`, `GENESIS_MS` and the bootstrap peers. Funding is PoW mining (1 thread,
+stops at the claim threshold). Everything below the prerequisites documents the **retired 0.2.x
+`logoscore` path** (`config/node.env`, `setup-node.sh`): that chain is gone, kept for reference only.
 
 ## Prerequisites & dependencies
 
 **Hardware / OS**
 - Ubuntu 24.04 LTS, **x86_64** · **glibc ≥ 2.39** (24.04 ships 2.39) · **≥ 64 GB** free disk · ~**8 GB** RAM.
 
-**Reboot-persistence is automatic and sudo-free.** `setup-node.sh` installs a user **`@reboot` crontab**
-(`install-persistence.sh` → `start-on-boot.sh`) that restarts the node + dashboard on every boot — **no
-`systemd` linger, no sudo**. That covers OS reboots. (SSH logout is already covered: the node is a detached
-`logoscore` daemon, the dashboard runs in tmux.)
+**Reboot-persistence is sudo-free.** `install-persistence-030.sh` installs a user **`@reboot` crontab**
+(→ `start-030-on-boot.sh`) that restarts the node + dashboard on every boot — **no `systemd` linger, no
+sudo**. That covers OS reboots. (SSH logout is already covered: the node and dashboard run in tmux.)
 
 **BIOS — auto-restart after power *outage*** (optional, one-time, needs physical/BIOS access):
 - To also survive a full power loss, set BIOS/UEFI **"Restore on AC Power Loss"** (a.k.a. *AC Power Recovery* /
@@ -36,17 +50,18 @@ sudo apt update && sudo apt install -y git curl jq tmux python3 cron gh fuse3
 - `jq` → verify/healthcheck JSON · `tmux` → keep the dashboard alive without a login manager · `cron` →
   sudo-free **reboot-persistence** (a user `@reboot` job restarts the node on boot — no `systemd --user`
   linger) · `python3` (stdlib only, no pip) → the dashboard · `git` → clone the repo (`gh` optional, for
-  GitHub ops) · `fuse3` → the node tools are AppImages that mount via FUSE (setup auto-extracts if absent).
-- **After this, everything is sudo-free.** `install-node-tools.sh` drops `logoscore`/`lgpd`/`lgpm` into
-  `~/logos-node/bin` (no sudo); the node, dashboard, and cleanup all run in userspace. The one thing that
-  still needs sudo — **reboot-persistence** (`loginctl enable-linger`) — is deferred to end-of-workshops.
+  GitHub ops) · `fuse3` → only the legacy 0.2.x AppImage tools needed it (the 0.3.x node is a plain binary).
+- **After this, everything is sudo-free.** The node binary lives in `~/logos-node-030`; the node, dashboard,
+  and reboot-persistence all run in userspace.
+- **CPU:** the node needs the ADX instruction set (Intel 5th gen / Broadwell or newer, AMD Zen). Without it
+  it dies with signal 4 (illegal instruction). Check: `grep -ow adx /proc/cpuinfo | head -1`.
 
-**Network egress:** GitHub (tools + module download) and the testnet **bootstrap peers over UDP/QUIC**
+**Network egress:** GitHub (binary download) and the testnet **bootstrap peers over UDP/QUIC**
 (outbound UDP must not be blocked). Dashboard is reached over the tailnet, not the public internet.
 
-`scripts/setup-node.sh` re-checks all of the above in preflight and prints the exact `apt` line for anything missing.
+`scripts/setup-node-030.sh` checks the essentials in preflight and prints the `apt` line for anything missing.
 
-## The flow (each step = a script; bump only `config/node.env` per release)
+## Legacy: the 0.2.x flow (retired chain; bump only `config/node.env` per release)
 
 | # | Do | Command *(run from the repo root)* | sudo? |
 |---|----|--------|-------|
@@ -63,7 +78,7 @@ crontab (step 4 above; `PERSIST=0 node-setup/scripts/setup-node.sh` to skip) —
 no sudo**. The only sudo is box-prep `apt` (done once). Surviving a power *outage* is the one-time BIOS setting
 (firmware, not sudo).
 
-## Run it
+### Run it
 
 ```bash
 git clone https://github.com/xAlisher/logos-node-agent.git && cd logos-node-agent
@@ -84,7 +99,7 @@ pre-warmed** (floor = daemon start + first block landing). `healthcheck.sh` gree
 climbing; reaching `Online` still takes the ~1 h bootstrap window (that's a separate, network-bound lever —
 see the state-snapshot skill).
 
-## Fund it (curl the faucet — no web form)
+### Fund it (curl the faucet — no web form)
 
 ```bash
 node-setup/scripts/fund-node.sh          # reads funding_pk from user_config.yaml, POSTs it to the faucet,
@@ -102,7 +117,7 @@ curl -s http://localhost:8080/wallet/<key>/balance    # 200 with a balance once 
 Tokens auto-stake; the node becomes consensus-eligible ~**3.5 h** after funding (can't be waited out live —
 for the demo, show *funded + Online + height tracking tip*).
 
-## Blockers this runbook already handles (or you must watch)
+### Blockers this runbook already handles (or you must watch)
 
 - **Empty IBD peers → "syncs nothing"** (GUI bug #3153 / module#54): we pass peers to `generate_user_config`,
   so both config blocks get populated. The CLI path is immune.
@@ -131,12 +146,12 @@ for the demo, show *funded + Online + height tracking tip*).
   ~1h bootstrap and activates once the chain is `Online`. Early `Blend … Starting` errors are transient
   noise, not a failure. Nothing to do — just let bootstrap finish.
 
-## Rehearsal plan (optiplex, user `dar`)
+### Rehearsal plan (optiplex, user `dar`)
 
 1. reset to clean Ubuntu (`uninstall.sh`) → 2. `setup-node.sh` → green → 3. repeat ×3, tightening scripts →
 4. snapshot the first synced node for fast runs 2–3 → 5. fresh-agent test (Claude Code is on optiplex).
 
-## Final checklist — the node is *done* when
+### Final checklist — the node is *done* when
 
 **Box prep (once, needs sudo / physical access)**
 - [ ] `git curl jq tmux python3 cron` installed · `tailscale` up with Tailscale SSH · Claude Code logged in

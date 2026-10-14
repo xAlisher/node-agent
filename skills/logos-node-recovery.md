@@ -1,5 +1,11 @@
 # Logos Node Recovery — Skill
 
+> **Legacy layout (0.1.x/0.2.x runbook).** Written for `state/live-v0.1.2/` with a
+> `recovery/consensus/chain_service.json` snapshot. The 0.3.x node (`setup-node-030.sh`) has neither: its
+> chain data is one RocksDB in `$NODE_HOME/state/db` and its log is `$NODE_HOME/node.log`. On 0.3.x, a node
+> that can't recover its chain is resynced instead: stop it, move `state/` aside, start it again. Keys live
+> in `user_config.yaml` + `keystore.yaml`, so they survive.
+
 ## Symptom
 
 Node crash-loops every ~10 seconds after a dirty shutdown (kernel panic, power loss):

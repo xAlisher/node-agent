@@ -44,7 +44,7 @@ J=$(curl -s --max-time 5 "$API/cryptarchia/info" 2>/dev/null)
 # a real Logos node answers with a `state`/`mode` and a `height`; anything else on :8080 is not our node
 st=$(echo "${J:-}" | jq -r '.cryptarchia_info.state // .mode // empty' 2>/dev/null)
 h=$(echo "${J:-}"  | jq -r '.cryptarchia_info.height // .height // empty' 2>/dev/null)
-NODE_STATE=absent; GREEN=no
+NODE_STATE=absent; GREEN=no; OUTDATED=no
 if [ -n "$st" ] || [ -n "$h" ]; then
   peers=$(curl -s --max-time 5 "$API/network/info" 2>/dev/null | jq -r '.n_peers // 0' 2>/dev/null)
   say "  tools=$TOOLS  config=$CFG  api=UP  state=${st:-?}  height=${h:-?}  peers=${peers:-0}"
@@ -54,6 +54,11 @@ if [ -n "$st" ] || [ -n "$h" ]; then
   if [ -n "$GENESIS_MS" ] && [ -n "$gen" ] && [ "$gen" != "$GENESIS_MS" ]; then
     say "  ⚠ OLD CHAIN: genesis=$gen, current testnet ($NODE_VERSION) is $GENESIS_MS"
     NODE_STATE=old-chain; GREEN=no
+  fi
+  ver=$(curl -s --max-time 5 "$API/version" 2>/dev/null | jq -r '.version // empty' 2>/dev/null)
+  if [ "${RAW:-no}" = yes ] && [ "$NODE_STATE" = running ] && [ -n "${NODE_VERSION:-}" ] && [ -n "$ver" ] && [ "$ver" != "$NODE_VERSION" ]; then
+    say "  ⚠ OUTDATED: node runs $ver, current release is $NODE_VERSION (same chain)"
+    OUTDATED=yes
   fi
 else
   [ -n "$J" ] && say "  (something answered on $API but it's not a Logos node — ignoring)"
@@ -88,6 +93,10 @@ if [ "$BOX_READY" != yes ]; then
 elif [ "$NODE_STATE" = old-chain ] || [ "$TOOLS" = legacy-logoscore ]; then
   say "→ NODE IS ON AN OLD CHAIN / LEGACY LAYOUT. Move to the current testnet ($NODE_VERSION):"
   say "    node-setup/scripts/setup-node-030.sh   (stops the old node, moves its config/keys/state to oldchain-<ver>/, starts fresh)"
+  say "  then verify:                          node-setup/scripts/healthcheck-030.sh"
+elif [ "$OUTDATED" = yes ]; then
+  say "→ NODE OUTDATED. Upgrade in place to $NODE_VERSION (keeps config, keys, funds, chain data):"
+  say "    node-setup/scripts/setup-node-030.sh   (stops the node, swaps the binary, restarts)"
   say "  then verify:                          node-setup/scripts/healthcheck-030.sh"
 elif [ "$NODE_STATE" = absent ]; then
   say "→ BOX READY, NO NODE.  Run node-setup:   node-setup/scripts/setup-node-030.sh"

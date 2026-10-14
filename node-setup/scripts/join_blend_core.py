@@ -7,9 +7,14 @@ equivalent: an agent (or an operator) runs it, watches each step, and gets a nod
 earning — or a clear reason why not.
 
 It is **stdlib-only** (urllib/json/argparse — no pip), like the rest of this repo, and mirrors the
-proven-on-sneg flow used by the logos_node_1click module backend:
+flow proven on sneg with the 0.3.1 node (2026-10-12):
 
-    fund the SDP funding key  ->  POST /blend/join {locator, locked_note_id}  ->  active at created+2
+    one note >= 1B (MIN_STAKE) on the Blend ZK key + fees on the SDP funding key
+      ->  POST /blend/join {locator, service_note_id}  ->  active at created+2 epochs
+
+The 1B minimum is checked against that single note (core/src/mantle/ops/sdp/declare.rs), and the join
+call only submits the tx: a smaller note still gets a declaration id back, then the tx is dropped at
+block validation. So this script refuses to join without a big enough note.
 
 Subcommands
     status    (default)  read-only: config, node reachability, our declaration, in-Core peers
@@ -23,7 +28,7 @@ final machine-readable `RESULT: {...}` line (the dashboard parses this).
 Safety
     `join`/`withdraw` mutate on-chain state. Non-interactive callers (the agent, the dashboard)
     must pass `--yes` to confirm; interactively you are prompted. `--fund` will request faucet
-    funds for the SDP key if it is empty.
+    funds for the SDP key (fees only) if it is empty.
 """
 from __future__ import annotations
 
@@ -37,12 +42,14 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-# ── config discovery defaults (aligned to node-setup: ~/logos-node/user_config.yaml) ──────────
-DEFAULT_NODE_HOME = Path(os.environ.get("NODE_HOME", str(Path.home() / "logos-node")))
+# ── config discovery defaults (aligned to node-setup: ~/logos-node-030/user_config.yaml) ──────
+DEFAULT_NODE_HOME = Path(os.environ.get("NODE_HOME", str(Path.home() / "logos-node-030")))
 DEFAULT_CONFIG = Path(os.environ.get("NODE_CONFIG", str(DEFAULT_NODE_HOME / "user_config.yaml")))
 DEFAULT_NODE_API = os.environ.get("NODE_API", os.environ.get("API", "http://127.0.0.1:8080"))
 DEFAULT_FAUCET = os.environ.get("FAUCET_BACKEND", "https://testnet.blockchain.logos.co/web/faucet-backend")
 DEFAULT_BLEND_PORT = 3400
+# sdp_config.min_stake.threshold of the 0.3.x testnet (nodes/node/binary/src/config/deployment/settings.yaml)
+MIN_STAKE = int(os.environ.get("BLEND_MIN_STAKE", "1000000000"))
 IP_ECHO_URLS = ("https://api.ipify.org", "https://ifconfig.me/ip", "https://icanhazip.com")
 HEX_RE = re.compile(r"^[0-9a-fA-F]{32,}$")
 
@@ -139,6 +146,26 @@ def sdp_funding_pk(text: str) -> str:
     raise fail("E_SDP_KEY_MISSING", "no sdp.wallet.funding_pk in the config — "
                                     "this node has no SDP funding key to stake from")
 
+def blend_zk_pk(text: str) -> str:
+    """The Blend ZK key (blend: ... zk: secret_key_kms_id). The stake note must be owned by it: the
+    declaration's zk_id is this key, and it is where Blend rewards are paid."""
+    in_blend = in_zk = False
+    for ln in text.splitlines():
+        if re.match(r"^blend:\s*$", ln):
+            in_blend = True
+            continue
+        if in_blend:
+            if re.match(r"^\S", ln):
+                break
+            if ln.strip() == "zk:":
+                in_zk = True
+                continue
+            m = re.search(r"secret_key_kms_id:\s*\"?([0-9a-fA-F]{32,})\"?", ln)
+            if in_zk and m:
+                return m.group(1)
+    raise fail("E_ZK_KEY_MISSING", "no blend zk secret_key_kms_id in the config — "
+                                   "this node has no Blend ZK key to stake with")
+
 def blend_port(text: str) -> int:
     """Mirror the module: explicit blend_port: else a /udp/N/quic on a blend line, else 3400."""
     m = re.search(r"blend_port:\s*(\d+)", text)
@@ -203,15 +230,15 @@ def note_values(node_api: str, sdp_pk: str) -> dict:
         return data["notes"]
     return {}
 
-def find_our_declaration(decls: dict, our_notes: set, stored_id: str = "") -> tuple:
+def find_our_declaration(decls: dict, zk_pk: str, stored_id: str = "") -> tuple:
     """Return (declaration_id, record) for THIS node's declaration, or (None, None).
 
-    Match priority: a locally stored id, else any declaration whose locked_note_id is one of
-    our SDP key's notes (the stake note stays visible in the wallet after locking)."""
+    Match priority: a locally stored id, else the declaration whose zk_id is our Blend ZK key
+    (zk_id is unique per service, so there is at most one)."""
     if stored_id and stored_id in decls:
         return stored_id, decls[stored_id]
     for did, rec in decls.items():
-        if isinstance(rec, dict) and rec.get("locked_note_id") in our_notes:
+        if isinstance(rec, dict) and rec.get("zk_id") == zk_pk:
             return did, rec
     return None, None
 
@@ -287,8 +314,10 @@ def cmd_status(args) -> int:
 
     cfg_text = read_config_text(Path(args.config))
     sdp_pk = sdp_funding_pk(cfg_text)
+    zk_pk = blend_zk_pk(cfg_text)
     port = blend_port(cfg_text)
-    info(f"SDP funding key: {sdp_pk[:12]}…{sdp_pk[-6:]}  ·  blend port: {port}")
+    info(f"SDP funding key (fees): {sdp_pk[:12]}…{sdp_pk[-6:]}  ·  Blend ZK key (stake): {zk_pk[:12]}…{zk_pk[-6:]}"
+         f"  ·  blend port: {port}")
 
     if not node_online(args.node_api):
         warn("node is still bootstrapping (not Online yet) — the Blend API isn't served until the node "
@@ -299,10 +328,14 @@ def cmd_status(args) -> int:
 
     notes = our_note_ids(args.node_api, sdp_pk)
     info(f"SDP key funded: {'yes' if notes else 'no'} ({len(notes)} note(s))")
+    zk_vals = note_values(args.node_api, zk_pk)
+    biggest = max((int(v) for v in zk_vals.values()), default=0)
+    info(f"largest note on the Blend ZK key: {biggest:,} (need one note >= {MIN_STAKE:,})")
 
     decls = all_declarations(args.node_api)
-    did, rec = find_our_declaration(decls, notes, load_stored_id(Path(args.config)))
+    did, rec = find_our_declaration(decls, zk_pk, load_stored_id(Path(args.config)))
     result = {"ok": True, "declared": bool(rec), "sdp_key_funded": bool(notes),
+              "stake_ready": biggest >= MIN_STAKE, "largest_stake_note": biggest, "min_stake": MIN_STAKE,
               "blend_port": port, "total_declarations_seen": len(decls)}
     if rec:
         d = describe_decl(args.node_api, did, rec)
@@ -311,8 +344,17 @@ def cmd_status(args) -> int:
         ok(f"DECLARED — id {did[:12]}…  created@{d['created']} active@{d['active']} "
            f"nonce={d['nonce']} core_peers={d['core_peers']} withdraw_at={d['withdraw_at']}")
         info(f"locator: {d['locator']}")
+        try:
+            _, ti = http_get_json(f"{args.node_api}/time/info", timeout=4)
+            epoch = int((ti or {}).get("current_epoch"))
+        except (urllib.error.URLError, OSError, TypeError, ValueError):
+            epoch = None
+        result["current_epoch"] = epoch
         if earning:
             ok("earning: nonce is advancing and the node is in the Core set")
+        elif epoch is not None and d["active"] is not None and epoch < int(d["active"]):
+            info(f"not active yet: current epoch {epoch}, becomes active at epoch {d['active']} "
+                 "(nonce and core peers stay 0 until then). Have the Blend UDP port forwarded by then.")
         else:
             warn("declared but not confirmed earning — if nonce stays flat, the Blend UDP port "
                  "is likely not reachable from the internet (port-forward it). See "
@@ -338,18 +380,19 @@ def cmd_join(args) -> int:
         raise fail("E_NODE_UNREACHABLE", f"node API not reachable at {args.node_api} — start the node first")
     if not node_online(args.node_api):
         raise fail("E_NOT_ONLINE", "node is still bootstrapping — Blend needs an Online node. "
-                                   "Wait until it reaches Online (watch healthcheck.sh), then join.")
+                                   "Wait until it reaches Online (watch healthcheck-030.sh), then join.")
     ok(f"node reachable and Online at {args.node_api}")
     cfg_path = Path(args.config)
     cfg_text = read_config_text(cfg_path)
     sdp_pk = sdp_funding_pk(cfg_text)
+    zk_pk = blend_zk_pk(cfg_text)
     port = blend_port(cfg_text)
-    ok(f"SDP funding key {sdp_pk[:12]}…{sdp_pk[-6:]}  ·  blend port {port}")
+    ok(f"SDP funding key {sdp_pk[:12]}…{sdp_pk[-6:]}  ·  Blend ZK key {zk_pk[:12]}…{zk_pk[-6:]}  ·  blend port {port}")
 
     step("Checking for an existing declaration (idempotent)")
     decls = all_declarations(args.node_api)
     notes = our_note_ids(args.node_api, sdp_pk)
-    did, rec = find_our_declaration(decls, notes, load_stored_id(cfg_path))
+    did, rec = find_our_declaration(decls, zk_pk, load_stored_id(cfg_path))
     if rec and rec.get("withdraw_at") is None:
         d = describe_decl(args.node_api, did, rec)
         ok(f"already declared — id {did[:12]}… (nonce={d['nonce']}, core_peers={d['core_peers']}). "
@@ -358,7 +401,7 @@ def cmd_join(args) -> int:
         return 0
     info("no active declaration — proceeding to declare")
 
-    step("Ensuring the SDP funding key has a stake note")
+    step("Ensuring the SDP funding key can pay the declaration fee")
     if not notes:
         if args.fund:
             request_faucet(args.faucet, sdp_pk)
@@ -366,17 +409,32 @@ def cmd_join(args) -> int:
                 raise fail("E_NO_FUNDS", "funds did not land in time — re-run once the wallet shows a balance")
             notes = our_note_ids(args.node_api, sdp_pk)
         else:
-            raise fail("E_NO_FUNDS", f"SDP key {sdp_pk[:12]}… has no notes to stake. "
-                                     f"Fund it first (scripts/fund-node.sh with FUND_PK={sdp_pk}, "
-                                     "or re-run this with --fund).")
-    used = {r.get("locked_note_id") for r in decls.values() if isinstance(r, dict)}
-    vals = note_values(args.node_api, sdp_pk)
-    free = [n for n in notes if n not in used]
-    if not free:
-        raise fail("E_NO_FREE_NOTE", "every note on the SDP key is already locked by a declaration — "
-                                     "fund the key with a fresh note to declare again")
-    locked_note = args.locked_note or max(free, key=lambda n: int(vals.get(n, 0)))
-    ok(f"stake note: {locked_note[:12]}…  (value {vals.get(locked_note, '?')})")
+            raise fail("E_NO_FUNDS", f"SDP key {sdp_pk[:12]}… has no notes to pay the declaration fee. "
+                                     f"Send it a small amount (e.g. 20M) from a funded key with "
+                                     "POST /wallet/transactions/transfer-funds, or re-run with --fund.")
+    ok(f"SDP key has {len(notes)} note(s) for fees")
+
+    step(f"Finding a stake note >= {MIN_STAKE:,} on the Blend ZK key")
+    used = {r.get("service_note_id") for r in decls.values() if isinstance(r, dict)}
+    vals = note_values(args.node_api, zk_pk)
+    if args.locked_note:
+        locked_note = args.locked_note
+        if locked_note not in vals:
+            raise fail("E_NOTE_NOT_OURS", f"note {locked_note[:12]}… is not on the Blend ZK key {zk_pk[:12]}…")
+    else:
+        free = [n for n, v in vals.items() if n not in used and int(v) >= MIN_STAKE]
+        if not free:
+            biggest = max((int(v) for v in vals.values()), default=0)
+            raise fail("E_STAKE_TOO_SMALL",
+                       f"no free note >= {MIN_STAKE:,} on the Blend ZK key (largest: {biggest:,}). The stake "
+                       "must be ONE note: notes are not summed. Send the amount to the Blend ZK key with "
+                       "POST /wallet/transactions/transfer-funds (recipient_public_key = "
+                       f"{zk_pk}); a tx takes at most 32 input notes, so merge small mining notes in rounds.")
+        locked_note = min(free, key=lambda n: int(vals[n]))
+    if int(vals[locked_note]) < MIN_STAKE:
+        raise fail("E_STAKE_TOO_SMALL", f"note {locked_note[:12]}… holds {int(vals[locked_note]):,}, "
+                                        f"below the {MIN_STAKE:,} minimum (the tx would be dropped)")
+    ok(f"stake note: {locked_note[:12]}…  (value {int(vals[locked_note]):,})")
 
     step("Building the on-chain locator (how peers reach you)")
     locator = args.locator or f"/ip4/{resolve_public_ip(cfg_text)}/udp/{port}/quic-v1"
@@ -391,19 +449,25 @@ def cmd_join(args) -> int:
     step("POST /blend/join")
     try:
         status, body = http_post(f"{args.node_api}/blend/join",
-                                 {"locator": locator, "locked_note_id": locked_note})
+                                 {"locator": locator, "service_note_id": locked_note})
     except (urllib.error.URLError, OSError) as e:
         raise fail("E_JOIN_NETWORK", f"the join request did not complete: {e}. "
                                      "The node MAY still have received it — run `status` before retrying "
                                      "(a retry could duplicate a paid transaction).")
     if not (200 <= status < 300):
         raise fail("E_JOIN_REJECTED", f"node rejected the declaration (http {status}): {body.strip() or '<empty>'}")
-    new_id = body.strip().strip('"')
+    # 0.3.x answers {"declaration_id": ..., "tx_id": ...}; older nodes answered a bare JSON string.
+    try:
+        parsed = json.loads(body)
+    except json.JSONDecodeError:
+        parsed = body.strip().strip('"')
+    new_id = parsed.get("declaration_id", "") if isinstance(parsed, dict) else str(parsed)
+    tx_id = parsed.get("tx_id") if isinstance(parsed, dict) else None
     if not new_id or not HEX_RE.match(new_id):
         raise fail("E_NO_DECL_ID", f"node returned no declaration id (got: {body.strip()!r}); "
                                    "outcome uncertain — run `status` to reconcile.")
-    ok(f"declared — declaration id {new_id}")
-    save_state(cfg_path, {"declaration_id": new_id, "locked_note_id": locked_note,
+    ok(f"declared — declaration id {new_id}" + (f"  (tx {tx_id})" if tx_id else ""))
+    save_state(cfg_path, {"declaration_id": new_id, "tx_id": tx_id, "service_note_id": locked_note,
                           "locator": locator, "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
 
     step("Verifying the declaration landed")
@@ -423,7 +487,7 @@ def cmd_join(args) -> int:
          f"earns (nonce stays flat). Port to forward: {port} (and the node's quic/discovery port). "
          "Verify with `status` — nonce should advance each epoch.")
     emit_result(args.json, {"ok": True, "declared": True, "declaration_id": new_id,
-                            "locator": locator, "locked_note_id": locked_note,
+                            "locator": locator, "service_note_id": locked_note, "tx_id": tx_id,
                             "created": created, "active": active, "blend_port": port})
     return 0
 
@@ -433,10 +497,9 @@ def cmd_withdraw(args) -> int:
         raise fail("E_NODE_UNREACHABLE", f"node API not reachable at {args.node_api}")
     cfg_path = Path(args.config)
     cfg_text = read_config_text(cfg_path)
-    sdp_pk = sdp_funding_pk(cfg_text)
+    zk_pk = blend_zk_pk(cfg_text)
     decls = all_declarations(args.node_api)
-    notes = our_note_ids(args.node_api, sdp_pk)
-    did = args.declaration_id or find_our_declaration(decls, notes, load_stored_id(cfg_path))[0]
+    did = args.declaration_id or find_our_declaration(decls, zk_pk, load_stored_id(cfg_path))[0]
     if not did:
         raise fail("E_NO_DECLARATION", "no declaration found for this node to withdraw")
     ok(f"declaration {did[:12]}…")
@@ -461,8 +524,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--node-api", default=DEFAULT_NODE_API, help=f"node RPC (default: {DEFAULT_NODE_API})")
     p.add_argument("--faucet", default=DEFAULT_FAUCET, help="faucet backend base URL (for --fund)")
     p.add_argument("--yes", action="store_true", help="confirm on-chain actions non-interactively")
-    p.add_argument("--fund", action="store_true", help="request faucet funds for the SDP key if it is empty")
-    p.add_argument("--locked-note", default="", help="note id to lock as stake (default: largest free note)")
+    p.add_argument("--fund", action="store_true", help="request faucet funds for the SDP key (fees) if it is empty")
+    p.add_argument("--locked-note", default="", help="Blend ZK key note id to lock as stake "
+                                                     "(default: smallest free note >= the 1B minimum)")
     p.add_argument("--locator", default="", help="override the on-chain locator multiaddr")
     p.add_argument("--declaration-id", default="", help="withdraw: the declaration id (default: auto-detect)")
     p.add_argument("--json", action="store_true", help="also print a final machine-readable RESULT line")

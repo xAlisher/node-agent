@@ -8,6 +8,9 @@ severity_reason: Node runs fine for hours then crashes the first time it wins a 
 status: active
 ---
 
+> **Legacy (0.1.x/0.2.x runbook).** The paths and the circuits v0.4.2 bundle below are from the old runbook
+> layout and are not re-verified on the 0.3.x single-binary node (`setup-node-030.sh`).
+
 ## Pitfall 1 — node panics the first time it WINS a slot (circuits missing)
 
 The node runs fine, syncs, connects to peers — then crashes the first time it wins a slot lottery
